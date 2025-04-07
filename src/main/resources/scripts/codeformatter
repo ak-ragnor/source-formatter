@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Get the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Assume the JAR is in the parent directory
+JAR_PATH="$SCRIPT_DIR/../advanced-formatter-1.0.0-SNAPSHOT.jar"
+
+# Run the formatter with all provided arguments
+java -jar "$JAR_PATH" "$@"

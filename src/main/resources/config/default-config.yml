@@ -1,0 +1,40 @@
+# Default Advanced Code Formatter Configuration
+
+general:
+  indentSize: 4
+  tabWidth: 4
+  useTabs: false
+  lineLength: 100
+  ignoreFiles:
+    - "**/*.min.js"
+    - "**/node_modules/**"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/target/**"
+
+plugins:
+  spring:
+    maxMethodLines: 50
+    maxMethodComplexity: 15
+    enforceDesignPatterns: true
+    enforceDependencyInjection: constructor
+    importOrganization:
+      groups:
+        - static
+        - java
+        - javax
+        - org.springframework
+        - com
+        - org
+
+  react:
+    maxComponentLines: 150
+    enforceHookDependencies: true
+    extractComponents: true
+    jsxLineBreakRule: multiline
+    importOrganization:
+      groups:
+        - react
+        - external
+        - internal
+        - css

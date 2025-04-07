@@ -1,0 +1,75 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'maven-publish'
+}
+
+group = 'com.codeformatter'
+version = '1.0.0-SNAPSHOT'
+sourceCompatibility = '17'
+
+application {
+    mainClass = 'com.codeformatter.cli.FormatterCli'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Core Dependencies
+    implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.25.0'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.2'
+    
+    // Spring Boot Analysis
+    implementation 'org.springframework:spring-core:6.0.6'
+    
+    // JavaScript/React Analysis
+    implementation 'org.graalvm.js:js:22.3.1'
+    implementation 'org.graalvm.js:js-scriptengine:22.3.1'
+    
+    // CLI
+    implementation 'info.picocli:picocli:4.7.1'
+    
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
+    testImplementation 'org.mockito:mockito-core:5.2.0'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Create a fat JAR with all dependencies
+jar {
+    manifest {
+        attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
+    }
+    
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// Create distributable packages
+tasks.register('createDistributable', Zip) {
+    from jar
+    from('src/main/resources/scripts') {
+        into 'bin'
+        fileMode = 0755
+    }
+    from('src/main/resources/config') {
+        into 'config'
+    }
+    from 'README.md'
+    from 'LICENSE'
+    
+    archiveFileName = "advanced-formatter-${version}.zip"
+    destinationDirectory = file("$buildDir/distributions")
+}
+
+build.dependsOn createDistributable
