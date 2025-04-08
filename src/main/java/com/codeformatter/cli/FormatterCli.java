@@ -1,8 +1,6 @@
 package com.codeformatter.cli;
 
 import com.codeformatter.api.FormatterResult;
-import com.codeformatter.api.error.FormatterError;
-import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
 import com.codeformatter.core.AdvancedCodeFormatter;
 import com.codeformatter.plugins.FileType;
@@ -11,11 +9,13 @@ import com.codeformatter.plugins.spring.SpringBootFormatter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,16 +29,17 @@ import java.util.stream.Stream;
 public class FormatterCli {
 
     private static final String CONFIG_FILE_NAME = ".codeformatter.yml";
+    private static final String VERSION = "1.0.0";
 
     public static void main(String[] args) {
-        if (args.length < 1) {
-            printUsage();
-            System.exit(1);
-        }
-
-        String command = args[0];
-
         try {
+            if (args.length < 1) {
+                printUsage();
+                System.exit(1);
+            }
+
+            String command = args[0];
+
             switch (command) {
                 case "format":
                     formatFiles(args);
@@ -48,6 +49,14 @@ public class FormatterCli {
                     break;
                 case "init":
                     initializeConfig();
+                    break;
+                case "--version":
+                case "-v":
+                    printVersion();
+                    break;
+                case "--help":
+                case "-h":
+                    printUsage();
                     break;
                 default:
                     System.err.println("Unknown command: " + command);
@@ -61,13 +70,23 @@ public class FormatterCli {
         }
     }
 
+    private static void printVersion() {
+        System.out.println("Advanced Code Formatter version " + VERSION);
+    }
+
     private static void printUsage() {
-        System.out.println("Advanced Code Formatter CLI");
+        System.out.println("Advanced Code Formatter CLI v" + VERSION);
         System.out.println("Usage:");
         System.out.println("  codeformatter init                 - Initialize configuration file");
         System.out.println("  codeformatter format <path>        - Format files in path");
         System.out.println("  codeformatter check <path>         - Check files without formatting");
-        System.out.println("  codeformatter --help               - Show this help");
+        System.out.println("  codeformatter --help|-h            - Show this help");
+        System.out.println("  codeformatter --version|-v         - Show version information");
+        System.out.println();
+        System.out.println("Options:");
+        System.out.println("  --config=<file>                    - Use specific config file (default: .codeformatter.yml)");
+        System.out.println("  --verbose                          - Show detailed output");
+        System.out.println("  --ci                               - CI friendly output (no colors, simplified)");
     }
 
     private static void formatFiles(String[] args) throws IOException {
@@ -85,28 +104,47 @@ public class FormatterCli {
             System.exit(1);
         }
 
-        FormatterConfig config = loadConfig();
-        AdvancedCodeFormatter formatter = createFormatter(config);
+        // Parse optional arguments
+        boolean verbose = hasOption(args, "--verbose");
+        boolean ciMode = hasOption(args, "--ci");
+        String configFile = getOptionValue(args, "--config");
+
+        FormatterConfig config;
+        if (configFile != null) {
+            config = loadConfig(Paths.get(configFile));
+        } else {
+            config = loadConfig();
+        }
+
+        AdvancedCodeFormatter formatter = createFormatter(config, verbose);
 
         AtomicInteger fileCount = new AtomicInteger(0);
         AtomicInteger errorCount = new AtomicInteger(0);
+        AtomicInteger skippedCount = new AtomicInteger(0);
 
-        List<Path> filesToFormat = findFiles(path);
+        List<Path> filesToFormat = findFiles(path, config.getGeneralConfig("ignoreFiles", new ArrayList<String>()));
         System.out.println("Found " + filesToFormat.size() + " files to format");
 
         for (Path file : filesToFormat) {
             try {
+                if (verbose) {
+                    System.out.println("Processing: " + file);
+                }
+
                 String source = Files.readString(file);
                 FormatterResult result = formatter.formatFile(file, source);
 
                 if (result.isSuccessful()) {
                     Files.writeString(file, result.getFormattedCode());
-                    System.out.println("Formatted: " + file);
 
-                    if (!result.getAppliedRefactorings().isEmpty()) {
-                        System.out.println("  Applied refactorings:");
-                        result.getAppliedRefactorings().forEach(r ->
-                                System.out.println("    - " + r.getDescription()));
+                    if (!ciMode) {
+                        System.out.println("Formatted: " + file);
+
+                        if (!result.getAppliedRefactorings().isEmpty()) {
+                            System.out.println("  Applied refactorings:");
+                            result.getAppliedRefactorings().forEach(r ->
+                                    System.out.println("    - " + r.getDescription()));
+                        }
                     }
                 } else {
                     System.err.println("Failed to format: " + file);
@@ -120,6 +158,9 @@ public class FormatterCli {
             } catch (Exception e) {
                 System.err.println("Error processing file: " + file);
                 System.err.println("  " + e.getMessage());
+                if (verbose) {
+                    e.printStackTrace();
+                }
                 errorCount.incrementAndGet();
             }
         }
@@ -127,6 +168,13 @@ public class FormatterCli {
         System.out.println("\nFormatting complete:");
         System.out.println("  Processed files: " + fileCount.get());
         System.out.println("  Files with errors: " + errorCount.get());
+        if (skippedCount.get() > 0) {
+            System.out.println("  Skipped files: " + skippedCount.get());
+        }
+
+        if (errorCount.get() > 0) {
+            System.exit(1);
+        }
     }
 
     private static void checkFiles(String[] args) throws IOException {
@@ -144,17 +192,33 @@ public class FormatterCli {
             System.exit(1);
         }
 
-        FormatterConfig config = loadConfig();
-        AdvancedCodeFormatter formatter = createFormatter(config);
+        // Parse optional arguments
+        boolean verbose = hasOption(args, "--verbose");
+        boolean ciMode = hasOption(args, "--ci");
+        String configFile = getOptionValue(args, "--config");
+
+        FormatterConfig config;
+        if (configFile != null) {
+            config = loadConfig(Paths.get(configFile));
+        } else {
+            config = loadConfig();
+        }
+
+        AdvancedCodeFormatter formatter = createFormatter(config, verbose);
 
         AtomicInteger fileCount = new AtomicInteger(0);
         AtomicInteger errorCount = new AtomicInteger(0);
+        AtomicInteger skippedCount = new AtomicInteger(0);
 
-        List<Path> filesToCheck = findFiles(path);
+        List<Path> filesToCheck = findFiles(path, config.getGeneralConfig("ignoreFiles", new ArrayList<String>()));
         System.out.println("Found " + filesToCheck.size() + " files to check");
 
         for (Path file : filesToCheck) {
             try {
+                if (verbose) {
+                    System.out.println("Checking: " + file);
+                }
+
                 String source = Files.readString(file);
                 FormatterResult result = formatter.formatFile(file, source);
 
@@ -175,12 +239,17 @@ public class FormatterCli {
                     }
 
                     errorCount.incrementAndGet();
+                } else if (verbose) {
+                    System.out.println("  OK: " + file);
                 }
 
                 fileCount.incrementAndGet();
             } catch (Exception e) {
                 System.err.println("Error checking file: " + file);
                 System.err.println("  " + e.getMessage());
+                if (verbose) {
+                    e.printStackTrace();
+                }
                 errorCount.incrementAndGet();
             }
         }
@@ -188,6 +257,9 @@ public class FormatterCli {
         System.out.println("\nCheck complete:");
         System.out.println("  Checked files: " + fileCount.get());
         System.out.println("  Files needing formatting: " + errorCount.get());
+        if (skippedCount.get() > 0) {
+            System.out.println("  Skipped files: " + skippedCount.get());
+        }
 
         if (errorCount.get() > 0) {
             System.exit(1);
@@ -208,70 +280,45 @@ public class FormatterCli {
             }
         }
 
-        String defaultConfig = """
-            # Advanced Code Formatter Configuration
-            
-            general:
-              indentSize: 4
-              tabWidth: 4
-              useTabs: false
-              lineLength: 100
-              ignoreFiles:
-                - "**/*.min.js"
-                - "**/node_modules/**"
-                - "**/build/**"
-                - "**/dist/**"
-                - "**/target/**"
-            
-            plugins:
-              spring:
-                maxMethodLines: 50
-                maxMethodComplexity: 15
-                enforceDesignPatterns: true
-                enforceDependencyInjection: constructor
-                importOrganization:
-                  groups:
-                    - static
-                    - java
-                    - javax
-                    - org.springframework
-                    - com
-                    - org
-            
-              react:
-                maxComponentLines: 150
-                enforceHookDependencies: true
-                extractComponents: true
-                jsxLineBreakRule: multiline
-                importOrganization:
-                  groups:
-                    - react
-                    - external
-                    - internal
-                    - css
-            """;
+        String defaultConfig;
+        try (InputStream defaultConfigStream = FormatterCli.class.getResourceAsStream("/config/default-config.yml")) {
+            if (defaultConfigStream == null) {
+                System.err.println("Error: Could not load default configuration");
+                System.exit(1);
+            }
 
+            defaultConfig = new String(defaultConfigStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
         Files.writeString(configPath, defaultConfig);
         System.out.println("Created configuration file: " + CONFIG_FILE_NAME);
     }
 
-    private static FormatterConfig loadConfig() throws IOException {
-        Path configPath = Paths.get(CONFIG_FILE_NAME);
 
+    private static FormatterConfig loadConfig() throws IOException {
+        return loadConfig(Paths.get(CONFIG_FILE_NAME));
+    }
+
+    private static FormatterConfig loadConfig(Path configPath) throws IOException {
         if (!Files.exists(configPath)) {
-            System.out.println("Configuration file not found: " + CONFIG_FILE_NAME);
+            System.out.println("Configuration file not found: " + configPath);
             System.out.println("Using default configuration");
             return createDefaultConfig();
         }
 
-        ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
-        Map<String, Object> config = mapper.readValue(configPath.toFile(), Map.class);
+        try {
+            ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+            Map<String, Object> config = mapper.readValue(configPath.toFile(), Map.class);
 
-        Map<String, Object> generalConfig = (Map<String, Object>) config.getOrDefault("general", new HashMap<>());
-        Map<String, Map<String, Object>> pluginConfigs = (Map<String, Map<String, Object>>)
-                config.getOrDefault("plugins", new HashMap<>());
+            Map<String, Object> generalConfig = (Map<String, Object>) config.getOrDefault("general", new HashMap<>());
+            Map<String, Map<String, Object>> pluginConfigs = (Map<String, Map<String, Object>>)
+                    config.getOrDefault("plugins", new HashMap<>());
 
-        return new FormatterConfig(generalConfig, pluginConfigs);
+            return new FormatterConfig(generalConfig, pluginConfigs);
+        } catch (Exception e) {
+            System.err.println("Error parsing configuration file: " + e.getMessage());
+            System.out.println("Using default configuration");
+            return createDefaultConfig();
+        }
     }
 
     private static FormatterConfig createDefaultConfig() {
@@ -296,19 +343,26 @@ public class FormatterCli {
         return new FormatterConfig(generalConfig, pluginConfigs);
     }
 
-    private static AdvancedCodeFormatter createFormatter(FormatterConfig config) {
+    private static AdvancedCodeFormatter createFormatter(FormatterConfig config, boolean verbose) {
         AdvancedCodeFormatter formatter = new AdvancedCodeFormatter(config);
 
-        formatter.registerPlugin(FileType.JAVA, new SpringBootFormatter());
-        formatter.registerPlugin(FileType.JAVASCRIPT, new ReactJSFormatter());
-        formatter.registerPlugin(FileType.JSX, new ReactJSFormatter());
-        formatter.registerPlugin(FileType.TYPESCRIPT, new ReactJSFormatter());
-        formatter.registerPlugin(FileType.TSX, new ReactJSFormatter());
+        try {
+            formatter.registerPlugin(FileType.JAVA, new SpringBootFormatter());
+            formatter.registerPlugin(FileType.JAVASCRIPT, new ReactJSFormatter());
+            formatter.registerPlugin(FileType.JSX, new ReactJSFormatter());
+            formatter.registerPlugin(FileType.TYPESCRIPT, new ReactJSFormatter());
+            formatter.registerPlugin(FileType.TSX, new ReactJSFormatter());
+        } catch (Exception e) {
+            System.err.println("Warning: Failed to initialize one or more formatter plugins: " + e.getMessage());
+            if (verbose) {
+                e.printStackTrace();
+            }
+        }
 
         return formatter;
     }
 
-    private static List<Path> findFiles(Path path) throws IOException {
+    private static List<Path> findFiles(Path path, List<String> ignorePatterns) throws IOException {
         if (Files.isRegularFile(path)) {
             return List.of(path);
         }
@@ -316,7 +370,8 @@ public class FormatterCli {
         try (Stream<Path> walk = Files.walk(path)) {
             return walk
                     .filter(Files::isRegularFile)
-                    .filter(FormatterCli::isSupported)
+                    .filter(p -> isSupported(p))
+                    .filter(p -> !isIgnored(p, path, ignorePatterns))
                     .collect(Collectors.toList());
         }
     }
@@ -328,5 +383,51 @@ public class FormatterCli {
                 fileName.endsWith(".jsx") ||
                 fileName.endsWith(".ts") ||
                 fileName.endsWith(".tsx");
+    }
+
+    private static boolean isIgnored(Path file, Path basePath, List<String> ignorePatterns) {
+        if (ignorePatterns == null || ignorePatterns.isEmpty()) {
+            return false;
+        }
+
+        String relativePath = basePath.relativize(file).toString().replace("\\", "/");
+
+        for (String pattern : ignorePatterns) {
+            // Basic glob pattern matching - a real implementation would use something more robust
+            if (pattern.startsWith("**/")) {
+                String suffix = pattern.substring(3);
+                if (relativePath.endsWith(suffix)) {
+                    return true;
+                }
+            } else if (pattern.endsWith("/**")) {
+                String prefix = pattern.substring(0, pattern.length() - 3);
+                if (relativePath.startsWith(prefix)) {
+                    return true;
+                }
+            } else if (pattern.equals(relativePath)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean hasOption(String[] args, String option) {
+        for (String arg : args) {
+            if (arg.equals(option)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String getOptionValue(String[] args, String option) {
+        String prefix = option + "=";
+        for (String arg : args) {
+            if (arg.startsWith(prefix)) {
+                return arg.substring(prefix.length());
+            }
+        }
+        return null;
     }
 }

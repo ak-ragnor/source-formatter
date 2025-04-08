@@ -53,7 +53,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
         }
 
         // Group imports by type
-        Map<String, List<Value>> groupedImports = groupImports(importNodes);
+        Map<String, List<Value>> groupedImports = groupImports(importNodes, ast);
 
         // Check if imports are already organized
         if (!areImportsOrganized(importNodes, groupedImports)) {
@@ -123,7 +123,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     /**
      * Group import nodes by their type (react, external, internal, css)
      */
-    private Map<String, List<Value>> groupImports(Value[] importNodes) {
+    private Map<String, List<Value>> groupImports(Value[] importNodes, JsAst ast) {
         Map<String, List<Value>> groupedImports = new HashMap<>();
 
         for (String group : importGroups) {
