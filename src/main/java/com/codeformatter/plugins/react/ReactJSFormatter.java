@@ -10,25 +10,38 @@ import com.codeformatter.plugins.react.analyzers.*;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * React JS formatter plugin using Babel/TypeScript parser to analyze and refactor React code.
  * This leverages a JavaScript engine bridge (GraalJS, Nashorn, etc.) to use JavaScript-based
  * parsers for accurate React code analysis.
  */
-public class ReactJSFormatter implements FormatterPlugin {
+public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
 
     private FormatterConfig config;
     private List<ReactCodeAnalyzer> analyzers;
     private JsEngine jsEngine;
 
+    private final Map<String, JsAst> astCache = new LinkedHashMap<String, JsAst>(100, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, JsAst> eldest) {
+            return size() > 100;
+        }
+    };
+
+    private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
+    private final ReentrantReadWriteLock.ReadLock readLock = cacheLock.readLock();
+    private final ReentrantReadWriteLock.WriteLock writeLock = cacheLock.writeLock();
+
     @Override
     public void initialize(FormatterConfig config) {
         this.config = config;
-        this.jsEngine = new JsEngine(); // Initialize JS engine bridge
+        this.jsEngine = new JsEngine();
 
-        // Initialize analyzers
         analyzers = new ArrayList<>();
         analyzers.add(new ComponentStructureAnalyzer(config, jsEngine));
         analyzers.add(new HookUsageAnalyzer(config, jsEngine));
@@ -39,8 +52,28 @@ public class ReactJSFormatter implements FormatterPlugin {
 
     @Override
     public FormatterResult format(Path filePath, String sourceCode) {
-        // Initialize parser and parse the code
-        JsAst ast = jsEngine.parseReactCode(sourceCode, isTypeScript(filePath));
+        String cacheKey = filePath.toString() + ":" + sourceCode.hashCode();
+        JsAst ast = null;
+
+        readLock.lock();
+        try {
+            ast = astCache.get(cacheKey);
+        } finally {
+            readLock.unlock();
+        }
+
+        if (ast == null) {
+            ast = jsEngine.parseReactCode(sourceCode, isTypeScript(filePath));
+
+            if (ast.isValid()) {
+                writeLock.lock();
+                try {
+                    astCache.put(cacheKey, ast);
+                } finally {
+                    writeLock.unlock();
+                }
+            }
+        }
 
         if (!ast.isValid()) {
             return handleParseError(ast.getError());
@@ -49,12 +82,10 @@ public class ReactJSFormatter implements FormatterPlugin {
         List<FormatterError> errors = new ArrayList<>();
         List<Refactoring> appliedRefactorings = new ArrayList<>();
 
-        // Apply all analyzers
         for (ReactCodeAnalyzer analyzer : analyzers) {
             ReactAnalyzerResult analyzerResult = analyzer.analyze(ast);
             errors.addAll(analyzerResult.getErrors());
 
-            // Apply automatic refactorings if possible
             if (analyzer.canAutoFix()) {
                 ReactRefactoringResult refactoringResult = analyzer.applyRefactoring(ast);
                 appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
@@ -62,11 +93,10 @@ public class ReactJSFormatter implements FormatterPlugin {
             }
         }
 
-        // Generate final formatted code
         String formattedCode = jsEngine.generateCode(ast);
 
-        boolean successful = !errors.stream()
-                .anyMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
+        boolean successful = errors.stream()
+                .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
 
         return FormatterResult.builder()
                 .successful(successful)
@@ -92,5 +122,22 @@ public class ReactJSFormatter implements FormatterPlugin {
                 .formattedCode(null)
                 .addError(error)
                 .build();
+    }
+
+    /**
+     * Cleans up resources when the formatter is no longer needed.
+     */
+    @Override
+    public void close() {
+        if (jsEngine != null) {
+            jsEngine.close();
+        }
+
+        writeLock.lock();
+        try {
+            astCache.clear();
+        } finally {
+            writeLock.unlock();
+        }
     }
 }
