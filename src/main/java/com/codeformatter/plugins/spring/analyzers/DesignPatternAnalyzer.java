@@ -8,8 +8,11 @@ import com.codeformatter.plugins.spring.CodeAnalyzer;
 import com.codeformatter.plugins.spring.RefactoringResult;
 import com.codeformatter.util.LoggerUtil;
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.BodyDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName;
+import com.github.javaparser.ast.stmt.SwitchStmt;
 
 import java.util.*;
 import java.util.logging.Level;
@@ -17,7 +20,7 @@ import java.util.logging.Logger;
 
 /**
  * Simplified analyzer that detects design pattern violations.
- * Focuses on identifying issues without complex refactoring logic.
+ * It only identifies potential issues without implementing complex refactoring logic.
  */
 public class DesignPatternAnalyzer implements CodeAnalyzer {
     private static final Logger logger = LoggerUtil.getLogger(DesignPatternAnalyzer.class);
@@ -42,10 +45,11 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
             List<ClassOrInterfaceDeclaration> classes = cu.findAll(ClassOrInterfaceDeclaration.class);
 
             for (ClassOrInterfaceDeclaration clazz : classes) {
+
                 _checkSingleResponsibilityPrinciple(clazz, errors);
                 _checkFactoryPattern(clazz, errors);
                 _checkBuilderPattern(clazz, errors);
-                _checkComplexSwitch(clazz, errors);
+                checkStrategyPattern(clazz, errors);
             }
         } catch (Exception e) {
             logger.log(Level.WARNING, "Error during design pattern analysis", e);
@@ -62,178 +66,165 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
 
     @Override
     public boolean canAutoFix() {
-        // Design pattern issues typically require manual fixing
+
         return false;
     }
 
     @Override
     public RefactoringResult applyRefactoring(CompilationUnit cu) {
-        // Since we can't auto-fix these issues, just return an empty result
         return new RefactoringResult(new ArrayList<>(), new ArrayList<>());
     }
 
     /**
-     * Checks if a class violates the Single Responsibility Principle
+     * Check if a class violates the Single Responsibility Principle
      */
     private void _checkSingleResponsibilityPrinciple(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
-        try {
-            List<MethodDeclaration> methods = clazz.getMethods();
+        int methodCount = clazz.getMethods().size();
+        if (methodCount > 15) {
+            errors.add(new FormatterError(
+                    Severity.WARNING,
+                    "Class '" + clazz.getNameAsString() + "' has " + methodCount +
+                            " methods, which may violate the Single Responsibility Principle",
+                    clazz.getBegin().get().line,
+                    clazz.getBegin().get().column,
+                    "Consider breaking this class into smaller, focused classes"
+            ));
+        }
 
-            // Too many methods can indicate violation of SRP
-            if (methods.size() > 20) {
-                errors.add(new FormatterError(
-                        Severity.WARNING,
-                        "Class '" + clazz.getNameAsString() + "' has too many methods (" + methods.size() +
-                                "), possibly violating the Single Responsibility Principle",
-                        clazz.getBegin().get().line,
-                        clazz.getBegin().get().column,
-                        "Consider breaking this class into smaller, focused classes"
-                ));
-            }
+        int fieldCount = clazz.getFields().size();
+        if (fieldCount > 10) {
+            errors.add(new FormatterError(
+                    Severity.WARNING,
+                    "Class '" + clazz.getNameAsString() + "' has " + fieldCount +
+                            " fields, which may violate the Single Responsibility Principle",
+                    clazz.getBegin().get().line,
+                    clazz.getBegin().get().column,
+                    "Consider breaking this class into smaller, focused classes"
+            ));
+        }
 
-            // Analyze method names to identify multiple concerns
-            Set<String> concerns = new HashSet<>();
-            for (MethodDeclaration method : methods) {
-                String name = method.getNameAsString();
-                if (name.startsWith("get") || name.startsWith("set") || name.startsWith("is")) {
-                    continue;
+        for (MethodDeclaration method : clazz.getMethods()) {
+            // TODO
+            // This is a simplified check - just look at method size
+            if (method.getBody().isPresent()) {
+                String methodBody = method.getBody().get().toString();
+                int bodyLineCount = methodBody.split("\n").length;
+
+                if (bodyLineCount > 50) {
+                    errors.add(new FormatterError(
+                            Severity.WARNING,
+                            "Method '" + method.getNameAsString() + "' is very long (" + bodyLineCount +
+                                    " lines) and may have too many responsibilities",
+                            method.getBegin().get().line,
+                            method.getBegin().get().column,
+                            "Consider breaking this method into smaller, focused methods"
+                    ));
                 }
-
-                // Simple heuristic: split camelCase names to extract "verb" part
-                if (!name.isEmpty()) {
-                    int endIndex = 1;
-                    while (endIndex < name.length() &&
-                            !Character.isUpperCase(name.charAt(endIndex))) {
-                        endIndex++;
-                    }
-                    if (endIndex > 0 && endIndex < name.length()) {
-                        concerns.add(name.substring(0, endIndex).toLowerCase());
-                    }
-                }
             }
-
-            if (concerns.size() > 3) {
-                errors.add(new FormatterError(
-                        Severity.WARNING,
-                        "Class '" + clazz.getNameAsString() + "' appears to handle multiple concerns: " +
-                                String.join(", ", concerns),
-                        clazz.getBegin().get().line,
-                        clazz.getBegin().get().column,
-                        "Consider separating these concerns into different classes"
-                ));
-            }
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "Error checking single responsibility principle for class " +
-                    clazz.getNameAsString(), e);
         }
     }
 
     /**
-     * Checks for Factory Pattern opportunities
+     * Check for Factory Pattern opportunities
      */
     private void _checkFactoryPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
-        try {
-            // Look for factory method candidates
-            List<MethodDeclaration> factoryMethodCandidates = clazz.getMethods().stream()
-                    .filter(m -> m.getType().isClassOrInterfaceType())
-                    .filter(m -> {
-                        String returnTypeName = m.getType().asString();
-                        String methodName = m.getNameAsString();
-                        return (methodName.startsWith("create") || methodName.startsWith("build") ||
-                                methodName.startsWith("get")) &&
-                                !returnTypeName.equals("void") &&
-                                !returnTypeName.equals("String") &&
-                                !returnTypeName.equals("Integer") &&
-                                !returnTypeName.equals("Long") &&
-                                !returnTypeName.equals("Boolean");
-                    })
-                    .toList();
 
-            if (factoryMethodCandidates.size() >= 3 && !clazz.getNameAsString().endsWith("Factory")) {
-                int line = clazz.getBegin().map(p -> p.line).orElse(1);
-                int column = clazz.getBegin().map(p -> p.column).orElse(1);
+        List<MethodDeclaration> factoryMethodCandidates = clazz.getMethods().stream()
+                .filter(m -> m.getNameAsString().startsWith("create") ||
+                        m.getNameAsString().startsWith("make") ||
+                        m.getNameAsString().startsWith("generate") ||
+                        m.getNameAsString().startsWith("build"))
+                .toList();
 
-                errors.add(new FormatterError(
-                        Severity.INFO,
-                        "Class '" + clazz.getNameAsString() + "' contains " + factoryMethodCandidates.size() +
-                                " factory method candidates",
-                        line,
-                        column,
-                        "Consider extracting these methods to a dedicated Factory class"
-                ));
-            }
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "Error checking factory pattern for class " +
-                    clazz.getNameAsString(), e);
+        if (factoryMethodCandidates.size() >= 3 && !clazz.getNameAsString().contains("Factory")) {
+            errors.add(new FormatterError(
+                    Severity.INFO,
+                    "Class '" + clazz.getNameAsString() + "' has " + factoryMethodCandidates.size() +
+                            " factory-like methods but doesn't appear to be a Factory class",
+                    clazz.getBegin().get().line,
+                    clazz.getBegin().get().column,
+                    "Consider implementing the Factory pattern"
+            ));
         }
     }
 
     /**
-     * Checks for Builder Pattern opportunities
+     * Check for Builder Pattern opportunities
      */
     private void _checkBuilderPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
-        try {
-            int fieldCount = clazz.getFields().size();
+        List<String> fieldNames = clazz.getFields().stream()
+                .flatMap(f -> f.getVariables().stream()
+                        .map(NodeWithSimpleName::getNameAsString))
+                .toList();
 
-            // Classes with many fields and complex constructors are candidates for Builder pattern
+        if (fieldNames.size() >= 5) {
             boolean hasComplexConstructor = clazz.getConstructors().stream()
                     .anyMatch(c -> c.getParameters().size() >= 4);
 
-            if (fieldCount >= 5 && hasComplexConstructor &&
-                    !clazz.getMembers().stream()
-                            .filter(m -> m.isClassOrInterfaceDeclaration())
-                            .anyMatch(m -> ((ClassOrInterfaceDeclaration)m).getNameAsString().equals("Builder"))) {
+            if (hasComplexConstructor) {
+                boolean hasBuilder = clazz.getMembers().stream()
+                        .filter(BodyDeclaration::isClassOrInterfaceDeclaration)
+                        .map(m -> (ClassOrInterfaceDeclaration)m)
+                        .anyMatch(c -> c.getNameAsString().equals("Builder"));
 
-                int line = clazz.getBegin().map(p -> p.line).orElse(1);
-                int column = clazz.getBegin().map(p -> p.column).orElse(1);
-
-                errors.add(new FormatterError(
-                        Severity.INFO,
-                        "Class '" + clazz.getNameAsString() + "' has " + fieldCount +
-                                " fields and complex constructors",
-                        line,
-                        column,
-                        "Consider implementing a Builder pattern for this class"
-                ));
+                if (!hasBuilder) {
+                    errors.add(new FormatterError(
+                            Severity.INFO,
+                            "Class '" + clazz.getNameAsString() + "' has " + fieldNames.size() +
+                                    " fields and complex constructors - consider using Builder pattern",
+                            clazz.getBegin().get().line,
+                            clazz.getBegin().get().column,
+                            "Implement a Builder inner class to simplify object creation"
+                    ));
+                }
             }
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "Error checking builder pattern for class " +
-                    clazz.getNameAsString(), e);
         }
     }
 
     /**
-     * Checks for complex switch statements that could benefit from Strategy pattern
+     * Check for Strategy Pattern opportunities via switch statements
      */
-    private void _checkComplexSwitch(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
-        try {
-            clazz.getMethods().stream()
-                    .filter(m -> m.getBody().isPresent())
-                    .forEach(method -> {
-                        // Count switch statements
-                        long switchCount = method.getBody().get()
-                                .findAll(com.github.javaparser.ast.stmt.SwitchStmt.class).size();
+    private void checkStrategyPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
+        for (MethodDeclaration method : clazz.getMethods()) {
+            if (method.getBody().isPresent()) {
+                List<SwitchStmt> switches = method.getBody().get().findAll(SwitchStmt.class);
 
-                        // Count if-else chains
-                        long ifCount = method.getBody().get()
-                                .findAll(com.github.javaparser.ast.stmt.IfStmt.class).size();
+                if (switches.size() > 1) {
+                    errors.add(new FormatterError(
+                            Severity.INFO,
+                            "Method '" + method.getNameAsString() + "' has multiple switch statements",
+                            method.getBegin().get().line,
+                            method.getBegin().get().column,
+                            "Consider using the Strategy Pattern to improve extensibility"
+                    ));
+                } else if (switches.size() == 1) {
+                    SwitchStmt switchStmt = switches.get(0);
+                    int caseCount = switchStmt.getEntries().size();
 
-                        if (switchCount > 1 || ifCount >= 3) {
-                            int line = method.getBegin().map(p -> p.line).orElse(1);
-                            int column = method.getBegin().map(p -> p.column).orElse(1);
+                    if (caseCount > 3) {
+                        errors.add(new FormatterError(
+                                Severity.INFO,
+                                "Method '" + method.getNameAsString() + "' has a switch statement with " +
+                                        caseCount + " cases",
+                                switchStmt.getBegin().get().line,
+                                switchStmt.getBegin().get().column,
+                                "Consider using the Strategy Pattern to improve extensibility"
+                        ));
+                    }
+                }
 
-                            errors.add(new FormatterError(
-                                    Severity.INFO,
-                                    "Method '" + method.getNameAsString() + "' contains complex conditional logic",
-                                    line,
-                                    column,
-                                    "Consider applying the Strategy Pattern to simplify this logic"
-                            ));
-                        }
-                    });
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "Error checking for complex switch statements in class " +
-                    clazz.getNameAsString(), e);
+                int ifStatementCount = method.getBody().get().findAll(com.github.javaparser.ast.stmt.IfStmt.class).size();
+                if (ifStatementCount >= 3) {
+                    errors.add(new FormatterError(
+                            Severity.INFO,
+                            "Method '" + method.getNameAsString() + "' has " + ifStatementCount +
+                                    " if statements which may indicate a chain of conditionals",
+                            method.getBegin().get().line,
+                            method.getBegin().get().column,
+                            "Consider using the Strategy Pattern or Command Pattern instead of conditional logic"
+                    ));
+                }
+            }
         }
     }
 }
