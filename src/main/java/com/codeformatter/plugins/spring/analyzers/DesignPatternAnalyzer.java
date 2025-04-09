@@ -33,15 +33,13 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
 
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find classes in the compilation unit
         List<ClassOrInterfaceDeclaration> classes = cu.findAll(ClassOrInterfaceDeclaration.class);
 
         for (ClassOrInterfaceDeclaration clazz : classes) {
-            // Simplified checks that just report errors
-            checkSingleResponsibilityPrinciple(clazz, errors);
-            checkFactoryPattern(clazz, errors);
-            checkStrategyPattern(clazz, errors);
-            checkBuilderPattern(clazz, errors);
+            _checkSingleResponsibilityPrinciple(clazz, errors);
+            _checkFactoryPattern(clazz, errors);
+            _checkStrategyPattern(clazz, errors);
+            _checkBuilderPattern(clazz, errors);
         }
 
         return new AnalyzerResult(errors);
@@ -61,10 +59,8 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
     /**
      * Checks if a class violates the Single Responsibility Principle
      */
-    private void checkSingleResponsibilityPrinciple(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
-        // This is a simplistic check - in a real implementation, we would need more sophisticated analysis
+    private void _checkSingleResponsibilityPrinciple(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
 
-        // Get all methods
         List<MethodDeclaration> methods = clazz.getMethods();
 
         if (methods.size() > 20) {
@@ -78,16 +74,13 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
             ));
         }
 
-        // Count the number of different "concerns" in method names
-        // This is a heuristic approach - in reality, you'd need semantic analysis
         Set<String> concerns = new HashSet<>();
         for (MethodDeclaration method : methods) {
             String name = method.getNameAsString();
             if (name.startsWith("get") || name.startsWith("set") || name.startsWith("is")) {
-                continue; // Skip basic accessors
+                continue;
             }
 
-            // Try to extract the "concern" from the method name
             String[] words = name.split("(?=[A-Z])");
             if (words.length > 0) {
                 concerns.add(words[0].toLowerCase());
@@ -109,7 +102,7 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
     /**
      * Checks for Factory Pattern opportunities
      */
-    private void checkFactoryPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
+    private void _checkFactoryPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
 
         List<MethodDeclaration> factoryMethodCandidates = clazz.getMethods().stream()
                 .filter(m -> m.getType().isClassOrInterfaceType())
@@ -144,7 +137,7 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
     /**
      * Checks for Strategy Pattern opportunities
      */
-    private void checkStrategyPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
+    private void _checkStrategyPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
 
         List<MethodDeclaration> methodsWithSwitchOrIfChains = clazz.getMethods().stream()
                 .filter(m -> m.getBody().isPresent())
@@ -178,13 +171,13 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
     /**
      * Checks for Builder Pattern opportunities
      */
-    private void checkBuilderPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
+    private void _checkBuilderPattern(ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
         int fieldCount = clazz.getFields().size();
 
         boolean hasComplexConstructor = clazz.getConstructors().stream()
                 .anyMatch(c -> c.getParameters().size() >= 4);
 
-        if (fieldCount >= 5 && hasComplexConstructor && !hasInnerBuilderClass(clazz)) {
+        if (fieldCount >= 5 && hasComplexConstructor && !_hasInnerBuilderClass(clazz)) {
             int line = clazz.getBegin().map(p -> p.line).orElse(1);
             int column = clazz.getBegin().map(p -> p.column).orElse(1);
 
@@ -199,7 +192,7 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
         }
     }
 
-    private boolean hasInnerBuilderClass(ClassOrInterfaceDeclaration clazz) {
+    private boolean _hasInnerBuilderClass(ClassOrInterfaceDeclaration clazz) {
         return clazz.getMembers().stream()
                 .filter(BodyDeclaration::isClassOrInterfaceDeclaration)
                 .map(m -> (ClassOrInterfaceDeclaration) m)

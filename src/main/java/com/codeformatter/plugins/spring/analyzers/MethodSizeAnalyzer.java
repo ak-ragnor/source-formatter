@@ -34,12 +34,11 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
         List<FormatterError> errors = new ArrayList<>();
 
         cu.findAll(MethodDeclaration.class).forEach(method -> {
-            // Get method body if present
             if (method.getBody().isPresent()) {
-                BlockStmt body = method.getBody().get();
 
-                // Check method size
-                int lineCount = countMethodLines(body);
+                BlockStmt body = method.getBody().get();
+                int lineCount = _countMethodLines(body);
+
                 if (lineCount > maxMethodLines) {
                     int line = method.getBegin().map(p -> p.line).orElse(1);
                     int column = method.getBegin().map(p -> p.column).orElse(1);
@@ -54,8 +53,7 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
                     ));
                 }
 
-                // Check method complexity
-                int complexity = calculateComplexity(body);
+                int complexity = _calculateComplexity(body);
                 if (complexity > maxMethodComplexity) {
                     int line = method.getBegin().map(p -> p.line).orElse(1);
                     int column = method.getBegin().map(p -> p.column).orElse(1);
@@ -86,15 +84,13 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
         List<FormatterError> errors = new ArrayList<>();
 
         cu.findAll(MethodDeclaration.class).forEach(method -> {
-            // Only process methods with bodies that are too large
             if (method.getBody().isPresent()) {
                 BlockStmt body = method.getBody().get();
 
-                int lineCount = countMethodLines(body);
+                int lineCount = _countMethodLines(body);
                 if (lineCount > maxMethodLines) {
                     try {
-                        // Try to break up the method
-                        boolean refactored = refactorLargeMethod(method);
+                        boolean refactored = _refactorLargeMethod(method);
 
                         if (refactored) {
                             refactorings.add(new Refactoring(
@@ -127,17 +123,15 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
         return new RefactoringResult(refactorings, errors);
     }
 
-    private int countMethodLines(BlockStmt body) {
+    private int _countMethodLines(BlockStmt body) {
         if (body.getEnd().isPresent() && body.getBegin().isPresent()) {
             return body.getEnd().get().line - body.getBegin().get().line + 1;
         }
         return 0;
     }
 
-    private int calculateComplexity(BlockStmt body) {
-        // Simplified McCabe complexity calculation
-        // Count branching statements (if, for, while, case, etc.)
-        int complexity = 1; // Base complexity
+    private int _calculateComplexity(BlockStmt body) {
+        int complexity = 1;
 
         complexity += body.findAll(com.github.javaparser.ast.stmt.IfStmt.class).size();
         complexity += body.findAll(com.github.javaparser.ast.stmt.ForStmt.class).size();
@@ -149,9 +143,7 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
         return complexity;
     }
 
-    private boolean refactorLargeMethod(MethodDeclaration method) {
-        // This is a simplified implementation
-        // Real implementation would analyze code blocks and extract logical chunks
+    private boolean _refactorLargeMethod(MethodDeclaration method) {
 
         if (!method.getBody().isPresent()) {
             return false;
@@ -160,12 +152,10 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
         BlockStmt body = method.getBody().get();
         List<Statement> statements = body.getStatements();
 
-        // If method has at least 10 statements, we'll try to extract
         if (statements.size() < 10) {
             return false;
         }
 
-        // Find the parent class to add the new method
         Node parent = method.getParentNode().orElse(null);
         if (!(parent instanceof ClassOrInterfaceDeclaration)) {
             return false;
@@ -173,37 +163,33 @@ public class MethodSizeAnalyzer implements CodeAnalyzer {
 
         ClassOrInterfaceDeclaration classDecl = (ClassOrInterfaceDeclaration) parent;
 
-        // For simplicity, we'll extract the second half of the method to a helper
         int splitPoint = statements.size() / 2;
 
-        // Create the extracted method with appropriate parameters
         MethodDeclaration helperMethod = new MethodDeclaration();
         helperMethod.setName(method.getNameAsString() + "Helper");
         helperMethod.setType(method.getType());
         helperMethod.setModifiers(NodeList.nodeList(Modifier.privateModifier()));
 
-        // Copy parameters from original method (simplified approach)
         for (Parameter param : method.getParameters()) {
             helperMethod.addParameter(param.clone());
         }
 
-        // Create body for helper method
+
         BlockStmt helperBody = new BlockStmt();
         for (int i = splitPoint; i < statements.size(); i++) {
             helperBody.addStatement(statements.get(i).clone());
         }
         helperMethod.setBody(helperBody);
 
-        // Add the helper method to the class
+
         classDecl.addMember(helperMethod);
 
-        // Update original method to call helper
+
         BlockStmt newBody = new BlockStmt();
         for (int i = 0; i < splitPoint; i++) {
             newBody.addStatement(statements.get(i).clone());
         }
 
-        // Add call to helper
         StringBuilder callStmt = new StringBuilder(helperMethod.getNameAsString() + "(");
         for (int i = 0; i < method.getParameters().size(); i++) {
             if (i > 0) callStmt.append(", ");

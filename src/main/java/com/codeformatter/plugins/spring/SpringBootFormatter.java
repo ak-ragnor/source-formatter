@@ -74,7 +74,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
             parseResult = parser.parse(sourceCode);
 
             if (!parseResult.isSuccessful()) {
-                return handleParseError(parseResult);
+                return _handleParseError(parseResult);
             }
 
             cu = parseResult.getResult().get();
@@ -120,7 +120,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
                 .build();
     }
 
-    private FormatterResult handleParseError(ParseResult<CompilationUnit> parseResult) {
+    private FormatterResult _handleParseError(ParseResult<CompilationUnit> parseResult) {
         FormatterError error = new FormatterError(
                 Severity.FATAL,
                 "Failed to parse Java source code: " +

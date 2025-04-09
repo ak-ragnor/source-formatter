@@ -34,12 +34,11 @@ public class JsEngine implements AutoCloseable {
     private static final int EXECUTION_TIMEOUT_SEC = 30;
 
     public JsEngine() {
-        // Create a GraalVM context with all permissions to allow file operations, but with resource limits
         context = Context.newBuilder("js")
                 .allowAllAccess(true)
                 .allowExperimentalOptions(true)
-                .option("js.memory-limit", String.valueOf(MEMORY_LIMIT_MB * 1024 * 1024)) // Convert to bytes
-                .option("js.execution-timeout", String.valueOf(EXECUTION_TIMEOUT_SEC * 1000)) // Convert to milliseconds
+                .option("js.memory-limit", String.valueOf(MEMORY_LIMIT_MB * 1024 * 1024))
+                .option("js.execution-timeout", String.valueOf(EXECUTION_TIMEOUT_SEC * 1000))
                 .build();
 
         try {
@@ -56,16 +55,12 @@ public class JsEngine implements AutoCloseable {
         }
 
         try {
-            // Load Babel parser
-            loadResource(BABEL_PARSER_RESOURCE);
-
-            // Load Prettier
-            loadResource(PRETTIER_RESOURCE);
-
-            // Load our custom parser wrapper
-            loadResource(PARSER_SCRIPT_RESOURCE);
+            _loadResource(BABEL_PARSER_RESOURCE);
+            _loadResource(PRETTIER_RESOURCE);
+            _loadResource(PARSER_SCRIPT_RESOURCE);
 
             initialized = true;
+
             logger.info("JavaScript engine initialized successfully");
         } catch (IOException e) {
             logger.log(Level.SEVERE, "Failed to load JavaScript resources", e);
@@ -73,7 +68,7 @@ public class JsEngine implements AutoCloseable {
         }
     }
 
-    private void loadResource(String resourcePath) throws IOException {
+    private void _loadResource(String resourcePath) throws IOException {
         try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
             if (is == null) {
                 logger.severe("Resource not found: " + resourcePath);
@@ -104,17 +99,14 @@ public class JsEngine implements AutoCloseable {
             return new JsAst(sourceCode, false, "JavaScript engine is not initialized");
         }
 
-        // Acquire lock for thread safety
         if (tryLock()) {
             return new JsAst(sourceCode, false, "Timed out waiting for JavaScript engine access");
         }
 
         try {
-            // Add the source code to the context
             context.getBindings("js").putMember("sourceCode", sourceCode);
             context.getBindings("js").putMember("isTypeScript", isTypeScript);
 
-            // Call the parse function with timeout handling
             Value result;
             try {
                 result = context.eval("js", "parseReactCode(sourceCode, isTypeScript)");
@@ -130,7 +122,6 @@ public class JsEngine implements AutoCloseable {
                 return new JsAst(sourceCode, false, error);
             }
 
-            // Store the AST in the JS context to be accessed later
             context.getBindings("js").putMember("currentAst", result.getMember("ast"));
 
             return new JsAst(sourceCode, true, null, result.getMember("ast"));
@@ -140,7 +131,6 @@ public class JsEngine implements AutoCloseable {
                     "Error parsing code: " + e.getMessage() +
                             (e.getCause() != null ? " Cause: " + e.getCause().getMessage() : ""));
         } finally {
-            // Release the lock
             contextLock.unlock();
         }
     }
@@ -151,7 +141,7 @@ public class JsEngine implements AutoCloseable {
      */
     public String generateCode(JsAst ast) {
         if (!ast.isValid()) {
-            return ast.getSourceCode(); // Return original code if AST is invalid
+            return ast.getSourceCode();
         }
 
         if (!initialized) {
@@ -159,29 +149,24 @@ public class JsEngine implements AutoCloseable {
             return ast.getSourceCode();
         }
 
-        // Acquire lock for thread safety
         if (tryLock()) {
             logger.warning("Timed out waiting for JavaScript engine access. Returning original code.");
             return ast.getSourceCode();
         }
 
         try {
-            // The AST is already in the JS context, now generate code from it
             Value result = context.eval("js", "generateCodeFromAst(currentAst)");
 
             if (result.hasMember("error")) {
-                // If there was an error, return the original code
                 logger.warning("Error generating code: " + result.getMember("error").asString());
                 return ast.getSourceCode();
             }
 
             return result.getMember("code").asString();
         } catch (Exception e) {
-            // In case of any error, return the original code
             logger.log(Level.WARNING, "Error in code generation", e);
             return ast.getSourceCode();
         } finally {
-            // Release the lock
             contextLock.unlock();
         }
     }
@@ -200,18 +185,15 @@ public class JsEngine implements AutoCloseable {
             return false;
         }
 
-        // Acquire lock for thread safety
         if (tryLock()) {
             logger.warning("Timed out waiting for JavaScript engine access. Cannot transform AST.");
             return false;
         }
 
         try {
-            // Convert Java map to JS object
             context.getBindings("js").putMember("transformOptions", options);
             context.getBindings("js").putMember("transformName", transformationName);
 
-            // Apply the transformation
             Value result = context.eval("js", "applyTransformation(currentAst, transformName, transformOptions)");
 
             return result.getMember("success").asBoolean();
@@ -219,7 +201,6 @@ public class JsEngine implements AutoCloseable {
             logger.log(Level.WARNING, "Error transforming AST: " + transformationName, e);
             return false;
         } finally {
-            // Release the lock
             contextLock.unlock();
         }
     }
@@ -244,36 +225,11 @@ public class JsEngine implements AutoCloseable {
     public void close() {
         if (context != null) {
             try {
-                context.close(true); // Close with cancel execution
+                context.close(true);
                 logger.info("JavaScript engine closed");
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Error closing JavaScript engine", e);
             }
-        }
-    }
-
-    /**
-     * Utility method to check if the JavaScript engine is healthy.
-     * Can be used for health checks or to test if the engine needs reinitialization.
-     */
-    public boolean isHealthy() {
-        if (!initialized) {
-            return false;
-        }
-
-        if (tryLock()) {
-            return false;
-        }
-
-        try {
-            // Simple health check expression
-            Value result = context.eval("js", "1 + 1");
-            return result.asInt() == 2;
-        } catch (Exception e) {
-            logger.log(Level.WARNING, "JavaScript engine health check failed", e);
-            return false;
-        } finally {
-            contextLock.unlock();
         }
     }
 }

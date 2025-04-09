@@ -10,12 +10,10 @@ import java.util.ArrayList;
 
 public class ImportOrganizer implements CodeAnalyzer {
     public ImportOrganizer(FormatterConfig config) {
-        // Initialize with config
     }
     
     @Override
     public AnalyzerResult analyze(CompilationUnit cu) {
-        // Analyze imports ordering and organization
         return new AnalyzerResult(new ArrayList<>());
     }
     
@@ -26,7 +24,6 @@ public class ImportOrganizer implements CodeAnalyzer {
     
     @Override
     public RefactoringResult applyRefactoring(CompilationUnit cu) {
-        // Implement import organization
         return new RefactoringResult(new ArrayList<>(), new ArrayList<>());
     }
 }

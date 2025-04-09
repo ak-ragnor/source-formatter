@@ -9,11 +9,8 @@ import com.codeformatter.plugins.spring.CodeAnalyzer;
 import com.codeformatter.plugins.spring.RefactoringResult;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.expr.AnnotationExpr;
-import com.github.javaparser.ast.expr.MemberValuePair;
-import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.body.FieldDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -41,21 +38,13 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
     public AnalyzerResult analyze(CompilationUnit cu) {
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find all classes with Component, Service, Repository, etc. annotations
-        List<ClassOrInterfaceDeclaration> springComponents = findSpringComponents(cu);
+        List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
 
         for (ClassOrInterfaceDeclaration component : springComponents) {
-            // Check dependency injection style
-            checkDependencyInjection(component, errors);
-
-            // Check component naming convention
-            checkNamingConvention(component, errors);
-
-            // Check for proper autowiring
-            checkAutowiring(component, errors);
-
-            // Check for missing @Qualifier when multiple beans of same type exist
-            checkQualifierUsage(component, errors);
+            _checkDependencyInjection(component, errors);
+            _checkNamingConvention(component, errors);
+            _checkAutowiring(component, errors);
+            _checkQualifierUsage(component, errors);
         }
 
         return new AnalyzerResult(errors);
@@ -71,13 +60,10 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         List<Refactoring> appliedRefactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find all Spring components
-        List<ClassOrInterfaceDeclaration> springComponents = findSpringComponents(cu);
+        List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
 
         for (ClassOrInterfaceDeclaration component : springComponents) {
-            // Fix dependency injection style if needed
-            boolean fixedDI = fixDependencyInjection(component);
-            if (fixedDI) {
+            if (_fixDependencyInjection(component)) {
                 appliedRefactorings.add(new Refactoring(
                         "SPRING_DI_FIX",
                         component.getBegin().get().line,
@@ -86,9 +72,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                 ));
             }
 
-            // Fix autowiring issues
-            boolean fixedAutowiring = fixAutowiring(component);
-            if (fixedAutowiring) {
+            if (_fixAutowiring(component)) {
                 appliedRefactorings.add(new Refactoring(
                         "SPRING_AUTOWIRING_FIX",
                         component.getBegin().get().line,
@@ -97,9 +81,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                 ));
             }
 
-            // Add appropriate qualifiers
-            boolean fixedQualifiers = addMissingQualifiers(component);
-            if (fixedQualifiers) {
+            if (_addMissingQualifiers(component)) {
                 appliedRefactorings.add(new Refactoring(
                         "SPRING_QUALIFIER_FIX",
                         component.getBegin().get().line,
@@ -112,30 +94,28 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         return new RefactoringResult(appliedRefactorings, errors);
     }
 
-    private List<ClassOrInterfaceDeclaration> findSpringComponents(CompilationUnit cu) {
+    private List<ClassOrInterfaceDeclaration> _findSpringComponents(CompilationUnit cu) {
         return cu.findAll(ClassOrInterfaceDeclaration.class).stream()
-                .filter(this::hasSpringComponentAnnotation)
+                .filter(this::_hasSpringComponentAnnotation)
                 .collect(Collectors.toList());
     }
 
-    private boolean hasSpringComponentAnnotation(ClassOrInterfaceDeclaration clazz) {
+    private boolean _hasSpringComponentAnnotation(ClassOrInterfaceDeclaration clazz) {
         return clazz.getAnnotations().stream()
                 .anyMatch(a -> COMPONENT_ANNOTATIONS.contains(a.getNameAsString()));
     }
 
-    private void checkDependencyInjection(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-        // Get all fields with @Autowired or @Inject
+    private void _checkDependencyInjection(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+
         List<FieldDeclaration> autowiredFields = component.getFields().stream()
                 .filter(f -> f.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired") || a.getNameAsString().equals("Inject")))
-                .collect(Collectors.toList());
+                .toList();
 
-        // Get constructor with @Autowired or @Inject
         boolean hasAutowiredConstructor = component.getConstructors().stream()
                 .anyMatch(c -> c.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired") || a.getNameAsString().equals("Inject")));
 
-        // Check against configured style
         if ("constructor".equals(dependencyInjectionStyle) && !autowiredFields.isEmpty()) {
             for (FieldDeclaration field : autowiredFields) {
                 errors.add(new FormatterError(
@@ -157,11 +137,10 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         }
     }
 
-    private void checkNamingConvention(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+    private void _checkNamingConvention(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
         String className = component.getNameAsString();
 
-        // Check for service naming convention
-        if (hasAnnotation(component, "Service") && !className.endsWith("Service") && !className.endsWith("ServiceImpl")) {
+        if (_hasAnnotation(component, "Service") && !className.endsWith("Service") && !className.endsWith("ServiceImpl")) {
             errors.add(new FormatterError(
                     Severity.WARNING,
                     "Service class name should end with 'Service' or 'ServiceImpl'",
@@ -171,8 +150,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
             ));
         }
 
-        // Check for repository naming convention
-        if (hasAnnotation(component, "Repository") && !className.endsWith("Repository") && !className.endsWith("RepositoryImpl")) {
+        if (_hasAnnotation(component, "Repository") && !className.endsWith("Repository") && !className.endsWith("RepositoryImpl")) {
             errors.add(new FormatterError(
                     Severity.WARNING,
                     "Repository class name should end with 'Repository' or 'RepositoryImpl'",
@@ -182,8 +160,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
             ));
         }
 
-        // Check for controller naming convention
-        if ((hasAnnotation(component, "Controller") || hasAnnotation(component, "RestController"))
+        if ((_hasAnnotation(component, "Controller") || _hasAnnotation(component, "RestController"))
                 && !className.endsWith("Controller")) {
             errors.add(new FormatterError(
                     Severity.WARNING,
@@ -195,13 +172,13 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         }
     }
 
-    private boolean hasAnnotation(ClassOrInterfaceDeclaration clazz, String annotationName) {
+    private boolean _hasAnnotation(ClassOrInterfaceDeclaration clazz, String annotationName) {
         return clazz.getAnnotations().stream()
                 .anyMatch(a -> a.getNameAsString().equals(annotationName));
     }
 
-    private void checkAutowiring(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-        // Check if there are fields with @Autowired but missing 'private' modifier
+    private void _checkAutowiring(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+
         component.getFields().stream()
                 .filter(f -> f.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired")))
@@ -216,7 +193,6 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                     ));
                 });
 
-        // Check for proper usage of @Qualifier
         component.getFields().stream()
                 .filter(f -> f.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired")))
@@ -224,8 +200,6 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                     boolean hasQualifier = f.getAnnotations().stream()
                             .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
 
-                    // This is a simplified check - in a real implementation,
-                    // we would need more context to know when a @Qualifier is really needed
                     if (!hasQualifier && f.getVariable(0).getTypeAsString().startsWith("List<")) {
                         errors.add(new FormatterError(
                                 Severity.WARNING,
@@ -238,24 +212,22 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                 });
     }
 
-    private void checkQualifierUsage(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+    private void _checkQualifierUsage(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
         // This is a simplified check - in a real implementation,
         // we would need to analyze the entire application context
         // to detect multiple beans of the same type
     }
 
-    // In SpringComponentAnalyzer.java, implement the fixDependencyInjection method:
 
-    private boolean fixDependencyInjection(ClassOrInterfaceDeclaration component) {
+    private boolean _fixDependencyInjection(ClassOrInterfaceDeclaration component) {
         if (!"constructor".equals(dependencyInjectionStyle)) {
             return false;
         }
 
-        // Get all @Autowired fields
         List<FieldDeclaration> autowiredFields = component.getFields().stream()
                 .filter(f -> f.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired")))
-                .collect(Collectors.toList());
+                .toList();
 
         if (autowiredFields.isEmpty()) {
             return false;
@@ -263,29 +235,23 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
 
         boolean changed = false;
 
-        // Check if we already have a constructor
         boolean hasConstructor = !component.getConstructors().isEmpty();
 
         if (!hasConstructor) {
-            // Create a new constructor
             com.github.javaparser.ast.body.ConstructorDeclaration constructor =
                     new com.github.javaparser.ast.body.ConstructorDeclaration();
             constructor.setName(component.getNameAsString());
             constructor.setPublic(true);
 
-            // Add @Autowired annotation if needed
             constructor.addAnnotation("Autowired");
 
-            // Add parameters for each autowired field
             for (FieldDeclaration field : autowiredFields) {
                 com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
                 String fieldName = field.getVariable(0).getNameAsString();
 
-                // Create parameter
                 com.github.javaparser.ast.body.Parameter param =
                         new com.github.javaparser.ast.body.Parameter(fieldType, fieldName);
 
-                // Add any qualifiers from the field
                 field.getAnnotations().stream()
                         .filter(a -> a.getNameAsString().equals("Qualifier"))
                         .findFirst()
@@ -294,26 +260,21 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                 constructor.addParameter(param);
             }
 
-            // Add constructor body with field assignments
             com.github.javaparser.ast.stmt.BlockStmt body = new com.github.javaparser.ast.stmt.BlockStmt();
             for (FieldDeclaration field : autowiredFields) {
                 String fieldName = field.getVariable(0).getNameAsString();
 
-                // Create assignment statement: this.field = field;
                 String stmt = "this." + fieldName + " = " + fieldName + ";";
                 body.addStatement(stmt);
 
-                // Remove @Autowired from field
                 field.getAnnotations().removeIf(a -> a.getNameAsString().equals("Autowired"));
             }
 
             constructor.setBody(body);
 
-            // Add constructor to class
             component.addMember(constructor);
             changed = true;
         } else {
-            // We have a constructor already, check if it's autowired
             com.github.javaparser.ast.body.ConstructorDeclaration existingConstructor =
                     component.getConstructors().get(0);
 
@@ -321,19 +282,17 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                     .anyMatch(a -> a.getNameAsString().equals("Autowired"));
 
             if (!isAutowired) {
-                // Add @Autowired to existing constructor
                 existingConstructor.addAnnotation("Autowired");
                 changed = true;
             }
 
-            // Check if constructor includes all autowired fields as parameters
             Set<String> paramNames = existingConstructor.getParameters().stream()
-                    .map(p -> p.getNameAsString())
+                    .map(NodeWithSimpleName::getNameAsString)
                     .collect(Collectors.toSet());
 
             List<FieldDeclaration> missingFields = autowiredFields.stream()
                     .filter(f -> !paramNames.contains(f.getVariable(0).getNameAsString()))
-                    .collect(Collectors.toList());
+                    .toList();
 
             if (!missingFields.isEmpty()) {
                 // This is a more complex refactoring that would modify the constructor
@@ -341,7 +300,6 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                 // by updating the constructor parameters and body
             }
 
-            // Remove @Autowired from fields if we have a proper constructor
             if (isAutowired || changed) {
                 for (FieldDeclaration field : autowiredFields) {
                     if (paramNames.contains(field.getVariable(0).getNameAsString())) {
@@ -355,10 +313,9 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         return changed;
     }
 
-    private boolean fixAutowiring(ClassOrInterfaceDeclaration component) {
+    private boolean _fixAutowiring(ClassOrInterfaceDeclaration component) {
         boolean changed = false;
 
-        // Fix non-private autowired fields
         for (FieldDeclaration field : component.getFields()) {
             if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired")) && !field.isPrivate()) {
                 field.setPrivate(true);
@@ -369,7 +326,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
         return changed;
     }
 
-    private boolean addMissingQualifiers(ClassOrInterfaceDeclaration component) {
+    private boolean _addMissingQualifiers(ClassOrInterfaceDeclaration component) {
         // This would require more complex AST manipulation and context
         return false;
     }

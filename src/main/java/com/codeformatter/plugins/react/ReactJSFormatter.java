@@ -63,7 +63,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
         }
 
         if (ast == null) {
-            ast = jsEngine.parseReactCode(sourceCode, isTypeScript(filePath));
+            ast = jsEngine.parseReactCode(sourceCode, _isTypeScript(filePath));
 
             if (ast.isValid()) {
                 writeLock.lock();
@@ -76,7 +76,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
         }
 
         if (!ast.isValid()) {
-            return handleParseError(ast.getError());
+            return _handleParseError(ast.getError());
         }
 
         List<FormatterError> errors = new ArrayList<>();
@@ -106,12 +106,12 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
                 .build();
     }
 
-    private boolean isTypeScript(Path filePath) {
+    private boolean _isTypeScript(Path filePath) {
         String fileName = filePath.getFileName().toString().toLowerCase();
         return fileName.endsWith(".ts") || fileName.endsWith(".tsx");
     }
 
-    private FormatterResult handleParseError(String errorMessage) {
+    private FormatterResult _handleParseError(String errorMessage) {
         FormatterError error = new FormatterError(
                 Severity.FATAL,
                 "Failed to parse React source code: " + errorMessage,

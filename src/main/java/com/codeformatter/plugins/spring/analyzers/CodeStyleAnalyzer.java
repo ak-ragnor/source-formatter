@@ -10,12 +10,10 @@ import java.util.ArrayList;
 
 public class CodeStyleAnalyzer implements CodeAnalyzer {
     public CodeStyleAnalyzer(FormatterConfig config) {
-        // Initialize with config
     }
     
     @Override
     public AnalyzerResult analyze(CompilationUnit cu) {
-        // Analyze code style issues
         return new AnalyzerResult(new ArrayList<>());
     }
     
@@ -26,7 +24,6 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     
     @Override
     public RefactoringResult applyRefactoring(CompilationUnit cu) {
-        // Fix code style issues
         return new RefactoringResult(new ArrayList<>(), new ArrayList<>());
     }
 }

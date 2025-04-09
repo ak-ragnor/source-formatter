@@ -28,7 +28,7 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
     public ReactAnalyzerResult analyze(JsAst ast) {
         List<FormatterError> errors = new ArrayList<>();
 
-        // In a real implementation, this would:
+        // TODO:
         // 1. Find React components in the AST
         // 2. Analyze their structure, size, and complexity
         // 3. Report issues
@@ -54,7 +54,7 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
         List<Refactoring> refactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
-        // In a real implementation, this would:
+        // TODO:
         // 1. Find large components
         // 2. Analyze logical parts that can be extracted
         // 3. Create new component files and update imports

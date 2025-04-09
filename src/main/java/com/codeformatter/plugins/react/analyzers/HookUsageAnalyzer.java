@@ -14,7 +14,6 @@ import org.graalvm.polyglot.Value;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Analyzes React Hook usage patterns and detects common issues
@@ -38,7 +37,6 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
 
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find all hook calls
         checkHookRules(ast, errors);
 
         if (enforceHookDependencies) {

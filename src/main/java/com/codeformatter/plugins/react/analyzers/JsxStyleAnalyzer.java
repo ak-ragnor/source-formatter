@@ -33,23 +33,15 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
             return new ReactAnalyzerResult(new ArrayList<>());
         }
 
-        List<FormatterError> errors = new ArrayList<>();
-
-        // Find all JSX elements
         Value[] jsxElements = ast.findNodes("JSXElement");
 
+        List<FormatterError> errors = new ArrayList<>();
+
         for (Value jsxElement : jsxElements) {
-            // Check for inline style usage
-            checkInlineStyles(ast, jsxElement, errors);
-
-            // Check for proper line breaks
-            checkLineBreaks(ast, jsxElement, errors);
-
-            // Check for empty spaces/fragments
-            checkEmptyFragments(ast, jsxElement, errors);
-
-            // Check for excessive props
-            checkExcessiveProps(ast, jsxElement, errors);
+            _checkInlineStyles(ast, jsxElement, errors);
+            _checkLineBreaks(ast, jsxElement, errors);
+            _checkEmptyFragments(ast, jsxElement, errors);
+            _checkExcessiveProps(ast, jsxElement, errors);
         }
 
         return new ReactAnalyzerResult(errors);
@@ -69,7 +61,6 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
         List<Refactoring> refactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
-        // Apply JSX style improvements
         Map<String, Object> options = new HashMap<>();
         options.put("lineBreakRule", jsxLineBreakRule);
 
@@ -78,7 +69,7 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
         if (success) {
             refactorings.add(new Refactoring(
                     "JSX_STYLE_IMPROVEMENT",
-                    1, // This would be more accurate with actual line numbers
+                    1,
                     1,
                     "Improved JSX formatting and style according to best practices"
             ));
@@ -97,9 +88,8 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for inline style usage in JSX
      */
-    private void checkInlineStyles(JsAst ast, Value jsxElement, List<FormatterError> errors) {
-        // Find style attributes
-        Value[] attributes = getJSXAttributes(jsxElement);
+    private void _checkInlineStyles(JsAst ast, Value jsxElement, List<FormatterError> errors) {
+        Value[] attributes = _getJSXAttributes(jsxElement);
 
         for (Value attr : attributes) {
             String attrName = ast.getStringProperty(attr.getMember("name"), "name");
@@ -119,14 +109,11 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for proper line breaks in JSX components with many props or children
      */
-    private void checkLineBreaks(JsAst ast, Value jsxElement, List<FormatterError> errors) {
-        Value[] attributes = getJSXAttributes(jsxElement);
-        Value[] children = getJSXChildren(jsxElement);
+    private void _checkLineBreaks(JsAst ast, Value jsxElement, List<FormatterError> errors) {
+        Value[] attributes = _getJSXAttributes(jsxElement);
+        Value[] children = _getJSXChildren(jsxElement);
 
-        // Check if JSX element has many props on one line
         if (attributes.length > 3) {
-            // In a real implementation, we would check if all attributes are on the same line
-            // by examining the node's location data
             if ("multiline".equals(jsxLineBreakRule)) {
                 errors.add(new FormatterError(
                         Severity.INFO,
@@ -138,7 +125,6 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
             }
         }
 
-        // Check if JSX element has many children on one line
         if (children.length > 3) {
             // Again, in a real implementation we would check the actual line breaks
             errors.add(new FormatterError(
@@ -154,11 +140,11 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for empty fragments that could be simplified or removed
      */
-    private void checkEmptyFragments(JsAst ast, Value jsxElement, List<FormatterError> errors) {
+    private void _checkEmptyFragments(JsAst ast, Value jsxElement, List<FormatterError> errors) {
         String openingElement = ast.getStringProperty(jsxElement.getMember("openingElement").getMember("name"), "name");
 
         if ("Fragment".equals(openingElement) || "React.Fragment".equals(openingElement)) {
-            Value[] children = getJSXChildren(jsxElement);
+            Value[] children = _getJSXChildren(jsxElement);
 
             if (children.length == 0) {
                 errors.add(new FormatterError(
@@ -183,8 +169,8 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for components with excessive props that might need refactoring
      */
-    private void checkExcessiveProps(JsAst ast, Value jsxElement, List<FormatterError> errors) {
-        Value[] attributes = getJSXAttributes(jsxElement);
+    private void _checkExcessiveProps(JsAst ast, Value jsxElement, List<FormatterError> errors) {
+        Value[] attributes = _getJSXAttributes(jsxElement);
 
         if (attributes.length > 7) {
             errors.add(new FormatterError(
@@ -200,7 +186,7 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Helper method to get JSX attributes from an element
      */
-    private Value[] getJSXAttributes(Value jsxElement) {
+    private Value[] _getJSXAttributes(Value jsxElement) {
         if (jsxElement.hasMember("openingElement") &&
                 jsxElement.getMember("openingElement").hasMember("attributes")) {
 
@@ -221,7 +207,7 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
     /**
      * Helper method to get JSX children from an element
      */
-    private Value[] getJSXChildren(Value jsxElement) {
+    private Value[] _getJSXChildren(Value jsxElement) {
         if (jsxElement.hasMember("children")) {
             Value children = jsxElement.getMember("children");
             int size = (int) children.getArraySize();

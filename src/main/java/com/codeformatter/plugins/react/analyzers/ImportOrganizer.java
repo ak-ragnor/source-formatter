@@ -12,7 +12,6 @@ import com.codeformatter.plugins.react.ReactRefactoringResult;
 import org.graalvm.polyglot.Value;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Analyzes and organizes import statements in React/JavaScript files
@@ -22,19 +21,14 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     private final JsEngine jsEngine;
     private final List<String> importGroups;
 
-    @SuppressWarnings("unchecked")
     public ImportOrganizer(FormatterConfig config, JsEngine jsEngine) {
         this.config = config;
         this.jsEngine = jsEngine;
-
-        // Get configured import groups or use default
-        List<String> configuredGroups = (List<String>) config.getPluginConfig(
+        this.importGroups = config.getPluginConfig(
                 "react",
                 "importOrganization.groups",
                 Arrays.asList("react", "external", "internal", "css")
         );
-
-        this.importGroups = configuredGroups;
     }
 
     @Override
@@ -43,20 +37,17 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
             return new ReactAnalyzerResult(Collections.emptyList());
         }
 
-        List<FormatterError> errors = new ArrayList<>();
-
-        // Find all import declarations
         Value[] importNodes = ast.findNodes("ImportDeclaration");
+
+        List<FormatterError> errors = new ArrayList<>();
 
         if (importNodes.length == 0) {
             return new ReactAnalyzerResult(errors);
         }
 
-        // Group imports by type
-        Map<String, List<Value>> groupedImports = groupImports(importNodes, ast);
+        Map<String, List<Value>> groupedImports = _groupImports(importNodes, ast);
 
-        // Check if imports are already organized
-        if (!areImportsOrganized(importNodes, groupedImports)) {
+        if (!_areImportsOrganized(importNodes, groupedImports)) {
             errors.add(new FormatterError(
                     Severity.WARNING,
                     "Import statements are not organized according to convention",
@@ -66,10 +57,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
             ));
         }
 
-        // Check for duplicate imports
-        checkDuplicateImports(importNodes, errors, ast);
-
-        // Check for unused imports (would require more complex analysis)
+        _checkDuplicateImports(importNodes, errors, ast);
 
         return new ReactAnalyzerResult(errors);
     }
@@ -88,14 +76,12 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
         List<Refactoring> refactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find all import declarations
         Value[] importNodes = ast.findNodes("ImportDeclaration");
 
         if (importNodes.length == 0) {
             return new ReactRefactoringResult(refactorings, errors);
         }
 
-        // Apply the import organization transformation
         Map<String, Object> options = new HashMap<>();
         options.put("groups", importGroups);
 
@@ -123,7 +109,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     /**
      * Group import nodes by their type (react, external, internal, css)
      */
-    private Map<String, List<Value>> groupImports(Value[] importNodes, JsAst ast) {
+    private Map<String, List<Value>> _groupImports(Value[] importNodes, JsAst ast) {
         Map<String, List<Value>> groupedImports = new HashMap<>();
 
         for (String group : importGroups) {
@@ -132,7 +118,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
 
         for (Value node : importNodes) {
             String source = ast.getStringProperty(node.getMember("source"), "value");
-            String group = determineImportGroup(source);
+            String group = _determineImportGroup(source);
             groupedImports.get(group).add(node);
         }
 
@@ -142,7 +128,7 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     /**
      * Determine which group an import belongs to
      */
-    private String determineImportGroup(String importPath) {
+    private String _determineImportGroup(String importPath) {
         if (importPath.equals("react") || importPath.startsWith("react-")) {
             return "react";
         } else if (importPath.startsWith("./") || importPath.startsWith("../") || importPath.startsWith("/")) {
@@ -157,10 +143,9 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     /**
      * Check if imports are already organized according to our convention
      */
-    private boolean areImportsOrganized(Value[] importNodes, Map<String, List<Value>> groupedImports) {
+    private boolean _areImportsOrganized(Value[] importNodes, Map<String, List<Value>> groupedImports) {
         int currentIndex = 0;
 
-        // Check if imports appear in the expected order
         for (String group : importGroups) {
             List<Value> imports = groupedImports.get(group);
 
@@ -168,7 +153,6 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
                 continue;
             }
 
-            // Check if all imports in this group are consecutive
             for (Value importNode : imports) {
                 if (Arrays.asList(importNodes).indexOf(importNode) != currentIndex) {
                     return false;
@@ -183,16 +167,14 @@ public class ImportOrganizer implements ReactCodeAnalyzer {
     /**
      * Check for duplicate imports
      */
-    private void checkDuplicateImports(Value[] importNodes, List<FormatterError> errors, JsAst ast) {
+    private void _checkDuplicateImports(Value[] importNodes, List<FormatterError> errors, JsAst ast) {
         Map<String, List<Value>> importsBySource = new HashMap<>();
 
-        // Group imports by source
         for (Value node : importNodes) {
             String source = ast.getStringProperty(node.getMember("source"), "value");
             importsBySource.computeIfAbsent(source, k -> new ArrayList<>()).add(node);
         }
 
-        // Check for duplicates
         for (Map.Entry<String, List<Value>> entry : importsBySource.entrySet()) {
             if (entry.getValue().size() > 1) {
                 Value firstNode = entry.getValue().get(0);

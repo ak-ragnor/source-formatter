@@ -28,12 +28,10 @@ public class StateManagementAnalyzer implements ReactCodeAnalyzer {
             return new ReactAnalyzerResult(new ArrayList<>());
         }
 
+        Value[] useStateCalls = _findHookCalls(ast, "useState");
+
         List<FormatterError> errors = new ArrayList<>();
 
-        // Find all useState calls
-        Value[] useStateCalls = findHookCalls(ast, "useState");
-
-        // Check for excessive useState hooks
         if (useStateCalls.length > 5) {
             errors.add(new FormatterError(
                     Severity.WARNING,
@@ -43,7 +41,6 @@ public class StateManagementAnalyzer implements ReactCodeAnalyzer {
             ));
         }
 
-        // Check for potential object state issues
         for (Value useStateCall : useStateCalls) {
             if (useStateCall.getMember("arguments").getArraySize() > 0) {
                 Value initialState = useStateCall.getMember("arguments").getArrayElement(0);
@@ -62,10 +59,8 @@ public class StateManagementAnalyzer implements ReactCodeAnalyzer {
             }
         }
 
-        // Find useEffect calls that modify state
-        Value[] useEffectCalls = findHookCalls(ast, "useEffect");
+        Value[] useEffectCalls = _findHookCalls(ast, "useEffect");
         for (Value effect : useEffectCalls) {
-            // Check for empty dependency array (problematic if effect has side effects)
             if (effect.getMember("arguments").getArraySize() > 1) {
                 Value depsArg = effect.getMember("arguments").getArrayElement(1);
                 if (depsArg.hasMember("type") &&
@@ -97,7 +92,7 @@ public class StateManagementAnalyzer implements ReactCodeAnalyzer {
         return new ReactRefactoringResult(new ArrayList<>(), new ArrayList<>());
     }
 
-    private Value[] findHookCalls(JsAst ast, String hookName) {
+    private Value[] _findHookCalls(JsAst ast, String hookName) {
         Value[] calls = ast.findNodes("CallExpression");
         List<Value> hookCalls = new ArrayList<>();
 
