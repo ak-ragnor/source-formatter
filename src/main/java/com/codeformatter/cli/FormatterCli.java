@@ -9,6 +9,8 @@ import com.codeformatter.core.AdvancedCodeFormatter;
 import com.codeformatter.plugins.FileType;
 import com.codeformatter.plugins.react.ReactJSFormatter;
 import com.codeformatter.plugins.spring.SpringBootFormatter;
+import com.codeformatter.util.ErrorFormatter;
+import com.codeformatter.util.LoggerUtil;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -16,31 +18,21 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 /**
  * Enhanced Command Line Interface for the Advanced Code Formatter
  */
 public class FormatterCli {
-
+    private static final Logger logger = LoggerUtil.getLogger(FormatterCli.class);
     private static final String VERSION = "1.0.0";
     private static final String CONFIG_FILE_NAME = ".codeformatter.yml";
-
-    // ANSI colors for terminal output (can be disabled with --no-color)
-    private static final String ANSI_RESET = "\u001B[0m";
-    private static final String ANSI_RED = "\u001B[31m";
-    private static final String ANSI_GREEN = "\u001B[32m";
-    private static final String ANSI_YELLOW = "\u001B[33m";
-    private static final String ANSI_BLUE = "\u001B[34m";
-    private static final String ANSI_BOLD = "\u001B[1m";
-
-    private static boolean useColors = true;
+    private static ErrorFormatter errorFormatter;
 
     public static void main(String[] args) {
         try {
@@ -50,7 +42,15 @@ public class FormatterCli {
             }
 
             // Check for color disabling early
-            useColors = !_hasOption(args, "--no-color");
+            boolean useColors = !_hasOption(args, "--no-color");
+            errorFormatter = new ErrorFormatter(useColors);
+
+            // Configure logging level based on verbose flag
+            if (_hasOption(args, "--verbose")) {
+                LoggerUtil.setConsoleLevel(Level.FINE);
+            } else {
+                LoggerUtil.setConsoleLevel(Level.INFO);
+            }
 
             String command = args[0];
 
@@ -82,12 +82,16 @@ public class FormatterCli {
             }
         } catch (Exception e) {
             _printError("Error: " + e.getMessage());
+            logger.log(Level.SEVERE, "Unhandled exception", e);
+
             if (_hasOption(args, "--verbose")) {
                 e.printStackTrace();
             } else {
                 _printInfo("Use --verbose for stack trace");
             }
             System.exit(1);
+        } finally {
+            LoggerUtil.shutdown();
         }
     }
 
@@ -96,7 +100,7 @@ public class FormatterCli {
     }
 
     private static void _printUsage() {
-        System.out.println(_colorize(ANSI_BOLD, "Advanced Code Formatter CLI v" + VERSION));
+        System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_BOLD, "Advanced Code Formatter CLI v" + VERSION));
         System.out.println("Usage:");
         System.out.println("  codeformatter init [--force]      - Initialize configuration file");
         System.out.println("  codeformatter format <path>       - Format files in path");
@@ -171,6 +175,9 @@ public class FormatterCli {
 
             Instant start = Instant.now();
 
+            // Track all errors for summary report
+            Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
+
             // Process each file
             for (Path file : filesToFormat) {
                 try {
@@ -204,8 +211,13 @@ public class FormatterCli {
                         }
                     } else {
                         _printError("Failed to format: " + file);
+
+                        // Store errors for summary
+                        errorsByFile.put(file, result.getErrors());
+
+                        // Print detailed errors
                         result.getErrors().forEach(e ->
-                                _printError("  " + _formatError(e)));
+                                _printError("  " + errorFormatter.formatError(e)));
                         errorCount.incrementAndGet();
                     }
 
@@ -213,6 +225,19 @@ public class FormatterCli {
                 } catch (Exception e) {
                     _printError("Error processing file: " + file);
                     _printError("  " + e.getMessage());
+
+                    // Store the error
+                    List<FormatterError> errors = new ArrayList<>();
+                    errors.add(new FormatterError(
+                            Severity.FATAL,
+                            "Exception: " + e.getMessage(),
+                            1, 1,
+                            "Check the log file for details"
+                    ));
+                    errorsByFile.put(file, errors);
+
+                    logger.log(Level.SEVERE, "Error processing file: " + file, e);
+
                     if (verbose) {
                         e.printStackTrace();
                     }
@@ -232,6 +257,11 @@ public class FormatterCli {
                 System.out.println("  Skipped files: " + skippedCount.get());
             }
             System.out.println("  Total lines processed: " + totalLines.get());
+
+            // Print error summary if there were errors
+            if (!errorsByFile.isEmpty() && !ciMode) {
+                System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
+            }
 
             if (errorCount.get() > 0) {
                 System.exit(1);
@@ -277,6 +307,9 @@ public class FormatterCli {
             AtomicInteger skippedCount = new AtomicInteger(0);
             AtomicInteger nonCompliantCount = new AtomicInteger(0);
 
+            // Track errors by file
+            Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
+
             List<Path> filesToCheck = _findFiles(path,
                     config.getGeneralConfig("ignoreFiles", new ArrayList<String>()),
                     includePattern);
@@ -298,10 +331,15 @@ public class FormatterCli {
                         _printWarning("File needs formatting: " + file);
                         nonCompliantCount.incrementAndGet();
 
+                        // Store errors for summary
+                        if (!result.getErrors().isEmpty()) {
+                            errorsByFile.put(file, result.getErrors());
+                        }
+
                         if (!result.getErrors().isEmpty()) {
                             System.out.println("  Issues found:");
                             result.getErrors().forEach(e ->
-                                    _printError("    " + _formatError(e)));
+                                    _printError("    " + errorFormatter.formatError(e)));
                         }
 
                         if (!result.getAppliedRefactorings().isEmpty() && verbose) {
@@ -317,6 +355,20 @@ public class FormatterCli {
                 } catch (Exception e) {
                     _printError("Error checking file: " + file);
                     _printError("  " + e.getMessage());
+
+                    // Log the exception
+                    logger.log(Level.SEVERE, "Error checking file: " + file, e);
+
+                    // Store the error
+                    List<FormatterError> errors = new ArrayList<>();
+                    errors.add(new FormatterError(
+                            Severity.FATAL,
+                            "Exception: " + e.getMessage(),
+                            1, 1,
+                            "Check the log file for details"
+                    ));
+                    errorsByFile.put(file, errors);
+
                     if (verbose) {
                         e.printStackTrace();
                     }
@@ -333,6 +385,10 @@ public class FormatterCli {
             System.out.println("  Files with processing errors: " + errorCount.get());
             if (skippedCount.get() > 0) {
                 System.out.println("  Skipped files: " + skippedCount.get());
+            }
+
+            if (!errorsByFile.isEmpty() && !ciMode) {
+                System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
             }
 
             if (nonCompliantCount.get() > 0 || errorCount.get() > 0) {
@@ -363,6 +419,7 @@ public class FormatterCli {
 
         // Parse optional arguments
         boolean verbose = _hasOption(args, "--verbose");
+        boolean ciMode = _hasOption(args, "--ci");
         String configFile = _getOptionValue(args, "--config");
         String includePattern = _getOptionValue(args, "--include");
 
@@ -388,10 +445,7 @@ public class FormatterCli {
 
             Instant start = Instant.now();
 
-            // Track files by issue severity for reporting
-            List<Path> filesWithErrors = new ArrayList<>();
-            List<Path> filesWithWarnings = new ArrayList<>();
-            List<Path> filesWithInfo = new ArrayList<>();
+            Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
 
             for (Path file : filesToCheck) {
                 try {
@@ -402,33 +456,22 @@ public class FormatterCli {
                     String source = Files.readString(file);
                     FormatterResult result = formatter.formatFile(file, source);
 
-                    // Determine if file has issues by severity
-                    boolean hasErrors = result.getErrors().stream()
-                            .anyMatch(e -> e.getSeverity() == Severity.ERROR || e.getSeverity() == Severity.FATAL);
-                    boolean hasWarnings = result.getErrors().stream()
-                            .anyMatch(e -> e.getSeverity() == Severity.WARNING);
-                    boolean hasInfo = result.getErrors().stream()
-                            .anyMatch(e -> e.getSeverity() == Severity.INFO);
-
-                    // Add to appropriate lists for summary
-                    if (hasErrors) filesWithErrors.add(file);
-                    if (hasWarnings) filesWithWarnings.add(file);
-                    if (hasInfo) filesWithInfo.add(file);
-
-                    // Print issues if found
                     if (!result.getErrors().isEmpty()) {
-                        System.out.println(_colorize(ANSI_BOLD, file.toString() + ":"));
-                        // Group issues by severity for better readability
-                        Map<Severity, List<FormatterError>> errorsBySeverity = result.getErrors().stream()
-                                .collect(Collectors.groupingBy(FormatterError::getSeverity));
-
-                        // Print errors first, then warnings, then info
-                        _printErrorsBySeverity(errorsBySeverity, Severity.FATAL);
-                        _printErrorsBySeverity(errorsBySeverity, Severity.ERROR);
-                        _printErrorsBySeverity(errorsBySeverity, Severity.WARNING);
-                        _printErrorsBySeverity(errorsBySeverity, Severity.INFO);
-
+                        errorsByFile.put(file, result.getErrors());
                         issueCount.addAndGet(result.getErrors().size());
+
+                        if (!ciMode) {
+                            System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_BOLD,
+                                    file.toString() + ":"));
+
+                            Map<Severity, List<FormatterError>> errorsBySeverity =
+                                    errorFormatter.groupBySeverity(result.getErrors());
+
+                            _printErrorsBySeverity(errorsBySeverity, Severity.FATAL);
+                            _printErrorsBySeverity(errorsBySeverity, Severity.ERROR);
+                            _printErrorsBySeverity(errorsBySeverity, Severity.WARNING);
+                            _printErrorsBySeverity(errorsBySeverity, Severity.INFO);
+                        }
                     } else if (verbose) {
                         _printSuccess("  No issues found: " + file);
                     }
@@ -437,6 +480,20 @@ public class FormatterCli {
                 } catch (Exception e) {
                     _printError("Error analyzing file: " + file);
                     _printError("  " + e.getMessage());
+
+                    // Log the exception
+                    logger.log(Level.SEVERE, "Error analyzing file: " + file, e);
+
+                    // Store the error
+                    List<FormatterError> errors = new ArrayList<>();
+                    errors.add(new FormatterError(
+                            Severity.FATAL,
+                            "Exception: " + e.getMessage(),
+                            1, 1,
+                            "Check the log file for details"
+                    ));
+                    errorsByFile.put(file, errors);
+
                     if (verbose) {
                         e.printStackTrace();
                     }
@@ -449,15 +506,43 @@ public class FormatterCli {
 
             // Print comprehensive summary report
             System.out.println("\nAnalysis complete in " + _formatDuration(duration) + ":");
+
+            // Count files by severity for the summary
+            int filesWithErrors = (int) errorsByFile.values().stream()
+                    .filter(errors -> errors.stream()
+                            .anyMatch(e -> e.getSeverity() == Severity.ERROR || e.getSeverity() == Severity.FATAL))
+                    .count();
+
+            int filesWithWarnings = (int) errorsByFile.values().stream()
+                    .filter(errors -> errors.stream()
+                            .anyMatch(e -> e.getSeverity() == Severity.WARNING))
+                    .count();
+
+            int filesWithInfo = (int) errorsByFile.values().stream()
+                    .filter(errors -> errors.stream()
+                            .anyMatch(e -> e.getSeverity() == Severity.INFO))
+                    .count();
+
             System.out.println("  Files analyzed: " + fileCount.get());
             System.out.println("  Total issues found: " + issueCount.get());
-            System.out.println("  Files with errors: " + filesWithErrors.size());
-            System.out.println("  Files with warnings: " + filesWithWarnings.size());
-            System.out.println("  Files with suggestions: " + filesWithInfo.size());
+            System.out.println("  Files with errors: " + filesWithErrors);
+            System.out.println("  Files with warnings: " + filesWithWarnings);
+            System.out.println("  Files with suggestions: " + filesWithInfo);
             System.out.println("  Files with processing failures: " + errorCount.get());
 
-            // Exit with error code if issues were found
-            if (!filesWithErrors.isEmpty() || errorCount.get() > 0) {
+            if (!errorsByFile.isEmpty() && !ciMode) {
+                System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
+            }
+
+            if (ciMode) {
+                System.out.println("RESULT:files=" + fileCount.get() +
+                        ";errors=" + filesWithErrors +
+                        ";warnings=" + filesWithWarnings +
+                        ";info=" + filesWithInfo +
+                        ";issues=" + issueCount.get());
+            }
+
+            if (filesWithErrors > 0 || errorCount.get() > 0) {
                 System.exit(1);
             }
         } catch (Exception e) {
@@ -475,7 +560,6 @@ public class FormatterCli {
             return;
         }
 
-        // Let the configuration loader generate a default config
         FormatterConfig config = ConfigurationLoader.loadDefaultConfig();
         ConfigurationLoader.saveConfig(config, configPath);
         _printSuccess("Created configuration file: " + CONFIG_FILE_NAME);
@@ -493,6 +577,8 @@ public class FormatterCli {
             _printInfo("Initialized formatter with Spring Boot and React JS plugins");
         } catch (Exception e) {
             _printWarning("Warning: Failed to initialize one or more formatter plugins: " + e.getMessage());
+            logger.log(Level.WARNING, "Failed to initialize plugins", e);
+
             if (verbose) {
                 e.printStackTrace();
             }
@@ -530,16 +616,15 @@ public class FormatterCli {
 
     private static boolean _matchesIncludePattern(Path file, String includePattern) {
         if (includePattern == null || includePattern.isEmpty()) {
-            return true; // No include pattern specified, include all
+            return true;
         }
 
         String fileName = file.getFileName().toString();
-        // Simple glob implementation - in a real tool use java.nio.file.PathMatcher
+
         if (includePattern.startsWith("*.")) {
-            String extension = includePattern.substring(1); // *.java -> .java
+            String extension = includePattern.substring(1);
             return fileName.endsWith(extension);
         } else if (includePattern.contains("*")) {
-            // Convert glob pattern to regex
             String regex = includePattern
                     .replace(".", "\\.")
                     .replace("*", ".*")
@@ -558,7 +643,6 @@ public class FormatterCli {
         String relativePath = basePath.relativize(file).toString().replace("\\", "/");
 
         for (String pattern : ignorePatterns) {
-            // Enhanced glob pattern matching
             if (pattern.startsWith("**/")) {
                 String suffix = pattern.substring(3);
                 if (relativePath.endsWith(suffix)) {
@@ -570,7 +654,6 @@ public class FormatterCli {
                     return true;
                 }
             } else if (pattern.contains("*")) {
-                // Convert glob pattern to regex
                 String regex = pattern
                         .replace(".", "\\.")
                         .replace("*", ".*")
@@ -605,28 +688,17 @@ public class FormatterCli {
                 switch (severity) {
                     case FATAL:
                     case ERROR:
-                        _printError("  " + _formatError(error));
+                        _printError("  " + errorFormatter.formatError(error));
                         break;
                     case WARNING:
-                        _printWarning("  " + _formatError(error));
+                        _printWarning("  " + errorFormatter.formatError(error));
                         break;
                     case INFO:
-                        _printInfo("  " + _formatError(error));
+                        _printInfo("  " + errorFormatter.formatError(error));
                         break;
                 }
             }
         }
-    }
-
-    private static String _formatError(FormatterError error) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(error.getSeverity()).append(": ");
-        sb.append(error.getMessage());
-        sb.append(" (Line ").append(error.getLine()).append(")");
-        if (error.getSuggestion() != null && !error.getSuggestion().isEmpty()) {
-            sb.append(" - ").append(error.getSuggestion());
-        }
-        return sb.toString();
     }
 
     private static String _formatDuration(Duration duration) {
@@ -642,25 +714,18 @@ public class FormatterCli {
     }
 
     private static void _printSuccess(String message) {
-        System.out.println(_colorize(ANSI_GREEN, message));
+        System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_GREEN, message));
     }
 
     private static void _printError(String message) {
-        System.out.println(_colorize(ANSI_RED, message));
+        System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_RED, message));
     }
 
     private static void _printWarning(String message) {
-        System.out.println(_colorize(ANSI_YELLOW, message));
+        System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_YELLOW, message));
     }
 
     private static void _printInfo(String message) {
-        System.out.println(_colorize(ANSI_BLUE, message));
-    }
-
-    private static String _colorize(String color, String message) {
-        if (useColors) {
-            return color + message + ANSI_RESET;
-        }
-        return message;
+        System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_BLUE, message));
     }
 }
