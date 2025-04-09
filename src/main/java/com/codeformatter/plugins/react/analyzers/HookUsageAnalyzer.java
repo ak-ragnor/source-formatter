@@ -37,10 +37,10 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
 
         List<FormatterError> errors = new ArrayList<>();
 
-        checkHookRules(ast, errors);
+        _checkHookRules(ast, errors);
 
         if (enforceHookDependencies) {
-            checkHookDependencies(ast, errors);
+            _checkHookDependencies(ast, errors);
         }
 
         return new ReactAnalyzerResult(errors);
@@ -65,9 +65,9 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
             boolean success = jsEngine.transformAst(ast, "fixHookDependencies", new HashMap<>());
 
             if (success) {
-                Value[] useEffectCalls = findHookCalls(ast, "useEffect");
-                Value[] useCallbackCalls = findHookCalls(ast, "useCallback");
-                Value[] useMemoCalls = findHookCalls(ast, "useMemo");
+                Value[] useEffectCalls = _findHookCalls(ast, "useEffect");
+                Value[] useCallbackCalls = _findHookCalls(ast, "useCallback");
+                Value[] useMemoCalls = _findHookCalls(ast, "useMemo");
 
                 int totalHooks = useEffectCalls.length + useCallbackCalls.length + useMemoCalls.length;
 
@@ -88,32 +88,24 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check if React Hook Rules are being followed
      */
-    private void checkHookRules(JsAst ast, List<FormatterError> errors) {
-        // Find all function components
-        Value[] functionComponents = findFunctionComponents(ast);
+    private void _checkHookRules(JsAst ast, List<FormatterError> errors) {
+        Value[] functionComponents = _findFunctionComponents(ast);
 
         for (Value component : functionComponents) {
-            // Check for conditional hook calls within this component
-            checkConditionalHooks(ast, component, errors);
-
-            // Check for hook calls inside loops
-            checkHooksInLoops(ast, component, errors);
-
-            // Check for custom hooks not starting with "use"
-            checkCustomHookNaming(ast, component, errors);
+            _checkConditionalHooks(ast, component, errors);
+            _checkHooksInLoops(ast, component, errors);
+            _checkCustomHookNaming(ast, component, errors);
         }
     }
 
     /**
      * Check for conditional hook calls
      */
-    private void checkConditionalHooks(JsAst ast, Value component, List<FormatterError> errors) {
-        // Find all hook calls in this component
-        Value[] hookCalls = findAllHookCalls(ast, component);
+    private void _checkConditionalHooks(JsAst ast, Value component, List<FormatterError> errors) {
+        Value[] hookCalls = _findAllHookCalls(ast, component);
 
         for (Value hookCall : hookCalls) {
-            // Check if the hook call is inside an if statement, conditional expression, etc.
-            Value parent = getParentNode(hookCall);
+            Value parent = _getParentNode(hookCall);
             if (parent != null) {
                 String parentType = parent.getMember("type").asString();
                 if (parentType.equals("IfStatement") ||
@@ -122,7 +114,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
 
                     errors.add(new FormatterError(
                             Severity.ERROR,
-                            "React Hook '" + getHookName(hookCall) + "' is called conditionally. " +
+                            "React Hook '" + _getHookName(hookCall) + "' is called conditionally. " +
                                     "Hooks must be called at the top level of your component.",
                             ast.getNodeLine(hookCall),
                             ast.getNodeColumn(hookCall),
@@ -136,13 +128,11 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for hook calls inside loops
      */
-    private void checkHooksInLoops(JsAst ast, Value component, List<FormatterError> errors) {
-        // Find all hook calls in this component
-        Value[] hookCalls = findAllHookCalls(ast, component);
+    private void _checkHooksInLoops(JsAst ast, Value component, List<FormatterError> errors) {
+        Value[] hookCalls = _findAllHookCalls(ast, component);
 
         for (Value hookCall : hookCalls) {
-            // Check if the hook call is inside a loop
-            Value parent = getParentNode(hookCall);
+            Value parent = _getParentNode(hookCall);
             if (parent != null) {
                 String parentType = parent.getMember("type").asString();
                 if (parentType.equals("ForStatement") ||
@@ -153,7 +143,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
 
                     errors.add(new FormatterError(
                             Severity.ERROR,
-                            "React Hook '" + getHookName(hookCall) + "' is called in a loop. " +
+                            "React Hook '" + _getHookName(hookCall) + "' is called in a loop. " +
                                     "Hooks must be called at the top level of your component.",
                             ast.getNodeLine(hookCall),
                             ast.getNodeColumn(hookCall),
@@ -167,24 +157,20 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check for custom hooks not starting with "use"
      */
-    private void checkCustomHookNaming(JsAst ast, Value component, List<FormatterError> errors) {
-        // Custom hooks are functions that call hooks
+    private void _checkCustomHookNaming(JsAst ast, Value component, List<FormatterError> errors) {
         Value[] functions = ast.findNodes("FunctionDeclaration");
-        functions = addNodes(functions, ast.findNodes("ArrowFunctionExpression"));
-        functions = addNodes(functions, ast.findNodes("FunctionExpression"));
+        functions = _addNodes(functions, ast.findNodes("ArrowFunctionExpression"));
+        functions = _addNodes(functions, ast.findNodes("FunctionExpression"));
 
         for (Value func : functions) {
-            // Skip if this is a component (already checked)
-            if (isComponent(func)) {
+            if (_isComponent(func)) {
                 continue;
             }
 
-            // Check if this function calls hooks
-            Value[] hookCalls = findAllHookCalls(ast, func);
+            Value[] hookCalls = _findAllHookCalls(ast, func);
 
             if (hookCalls.length > 0) {
-                // This is likely a custom hook, check if it starts with "use"
-                String funcName = getFunctionName(func);
+                String funcName = _getFunctionName(func);
 
                 if (funcName != null && !funcName.startsWith("use")) {
                     errors.add(new FormatterError(
@@ -203,26 +189,22 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check if hook dependencies are correct
      */
-    private void checkHookDependencies(JsAst ast, List<FormatterError> errors) {
-        // Check useEffect hooks
-        Value[] useEffectCalls = findHookCalls(ast, "useEffect");
-        checkEffectDependencies(ast, useEffectCalls, errors);
+    private void _checkHookDependencies(JsAst ast, List<FormatterError> errors) {
+        Value[] useEffectCalls = _findHookCalls(ast, "useEffect");
+        _checkEffectDependencies(ast, useEffectCalls, errors);
 
-        // Check useCallback hooks
-        Value[] useCallbackCalls = findHookCalls(ast, "useCallback");
-        checkCallbackDependencies(ast, useCallbackCalls, errors);
+        Value[] useCallbackCalls = _findHookCalls(ast, "useCallback");
+        _checkCallbackDependencies(ast, useCallbackCalls, errors);
 
-        // Check useMemo hooks
-        Value[] useMemoCalls = findHookCalls(ast, "useMemo");
-        checkMemoDependencies(ast, useMemoCalls, errors);
+        Value[] useMemoCalls = _findHookCalls(ast, "useMemo");
+        _checkMemoDependencies(ast, useMemoCalls, errors);
     }
 
     /**
      * Check useEffect dependencies
      */
-    private void checkEffectDependencies(JsAst ast, Value[] effectCalls, List<FormatterError> errors) {
+    private void _checkEffectDependencies(JsAst ast, Value[] effectCalls, List<FormatterError> errors) {
         for (Value effect : effectCalls) {
-            // Effect should have two arguments
             if (effect.getMember("arguments").getArraySize() < 2) {
                 errors.add(new FormatterError(
                         Severity.WARNING,
@@ -234,7 +216,6 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
                 continue;
             }
 
-            // Second argument should be an array
             Value depsArg = effect.getMember("arguments").getArrayElement(1);
             if (!depsArg.getMember("type").asString().equals("ArrayExpression")) {
                 errors.add(new FormatterError(
@@ -247,12 +228,12 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
                 continue;
             }
 
-            // Check for empty dependency array but using variables
             Value deps = depsArg.getMember("elements");
             if (deps.getArraySize() == 0) {
                 // First argument should be a function
                 Value callback = effect.getMember("arguments").getArrayElement(0);
 
+                // TODO
                 // Check if the callback uses variables outside its scope
                 // This is a simplified check - a real implementation would be more sophisticated
             }
@@ -262,7 +243,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check useCallback dependencies
      */
-    private void checkCallbackDependencies(JsAst ast, Value[] callbackCalls, List<FormatterError> errors) {
+    private void _checkCallbackDependencies(JsAst ast, Value[] callbackCalls, List<FormatterError> errors) {
         // Similar to useEffect dependency checking
         for (Value callback : callbackCalls) {
             if (callback.getMember("arguments").getArraySize() < 2) {
@@ -280,8 +261,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
     /**
      * Check useMemo dependencies
      */
-    private void checkMemoDependencies(JsAst ast, Value[] memoCalls, List<FormatterError> errors) {
-        // Similar to useEffect dependency checking
+    private void _checkMemoDependencies(JsAst ast, Value[] memoCalls, List<FormatterError> errors) {
         for (Value memo : memoCalls) {
             if (memo.getMember("arguments").getArraySize() < 2) {
                 errors.add(new FormatterError(
@@ -297,13 +277,14 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
 
     // Helper methods
 
-    private Value[] findFunctionComponents(JsAst ast) {
+    private Value[] _findFunctionComponents(JsAst ast) {
+        // TODO
         // This is a simplified implementation
         // A real implementation would need to look for functions that return JSX
         return ast.findNodes("FunctionDeclaration");
     }
 
-    private Value[] findHookCalls(JsAst ast, String hookName) {
+    private Value[] _findHookCalls(JsAst ast, String hookName) {
         Value[] calls = ast.findNodes("CallExpression");
         List<Value> hookCalls = new ArrayList<>();
 
@@ -320,8 +301,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         return hookCalls.toArray(new Value[0]);
     }
 
-    private Value[] findAllHookCalls(JsAst ast, Value component) {
-        // Find all hook calls, including custom hooks (functions starting with "use")
+    private Value[] _findAllHookCalls(JsAst ast, Value component) {
         Value[] calls = ast.findNodes("CallExpression");
         List<Value> hookCalls = new ArrayList<>();
 
@@ -340,13 +320,14 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         return hookCalls.toArray(new Value[0]);
     }
 
-    private Value getParentNode(Value node) {
+    private Value _getParentNode(Value node) {
+        // TODO
         // This would require tracking parent-child relationships in the AST
         // For a real implementation, we would need to enhance the parser
         return null;
     }
 
-    private String getHookName(Value hookCall) {
+    private String _getHookName(Value hookCall) {
         if (hookCall.hasMember("callee") &&
                 hookCall.getMember("callee").hasMember("type") &&
                 hookCall.getMember("callee").getMember("type").asString().equals("Identifier")) {
@@ -357,12 +338,13 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         return "unknown";
     }
 
-    private boolean isComponent(Value func) {
+    private boolean _isComponent(Value func) {
+        // TODO
         // A real implementation would look for JSX return values
         return false;
     }
 
-    private String getFunctionName(Value func) {
+    private String _getFunctionName(Value func) {
         if (func.hasMember("id") && !func.getMember("id").isNull() && func.getMember("id").hasMember("name")) {
             return func.getMember("id").getMember("name").asString();
         }
@@ -370,7 +352,7 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         return null;
     }
 
-    private Value[] addNodes(Value[] array1, Value[] array2) {
+    private Value[] _addNodes(Value[] array1, Value[] array2) {
         Value[] result = new Value[array1.length + array2.length];
         System.arraycopy(array1, 0, result, 0, array1.length);
         System.arraycopy(array2, 0, result, array1.length, array2.length);

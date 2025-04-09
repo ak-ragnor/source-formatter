@@ -257,6 +257,7 @@ function fixHookDependencies(ast, options) {
  * Extract components from large components
  */
 function extractComponent(ast, options) {
+    // TODO
     // This is a complex transformation that would require more code
     // For now, we'll implement a placeholder
     return;
