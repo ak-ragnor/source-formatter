@@ -28,11 +28,11 @@ public enum FileType {
     private final String extension;
     private final boolean isJavaScriptFamily;
 
-    // Cache for file type detection to improve performance
+
     private static final Map<Path, FileType> typeCache = new ConcurrentHashMap<>();
     private static final int MAX_CACHE_SIZE = 10000;
 
-    // Regular expressions for content-based detection
+
     private static final Pattern REACT_PATTERN = Pattern.compile(
             "(?:import\\s+React|from\\s+['\"]react['\"]|extends\\s+Component|" +
                     "<\\w+\\s*[/>]|function\\s+\\w+\\s*\\(\\s*\\)\\s*\\{\\s*return\\s*<)",
@@ -71,26 +71,26 @@ public enum FileType {
      * @return The detected FileType
      */
     public static FileType detect(Path filePath) {
-        // Check cache first
+
         FileType cachedType = typeCache.get(filePath);
         if (cachedType != null) {
             return cachedType;
         }
 
-        // Limit cache size
+
         if (typeCache.size() > MAX_CACHE_SIZE) {
             typeCache.clear();
             logger.fine("Cleared file type detection cache");
         }
 
-        // First try by extension
+
         FileType typeByExtension = detectByExtension(filePath);
         if (typeByExtension != UNKNOWN) {
             typeCache.put(filePath, typeByExtension);
             return typeByExtension;
         }
 
-        // If extension detection failed, try content-based detection
+
         FileType detectedType = detectByContent(filePath);
         typeCache.put(filePath, detectedType);
         return detectedType;
@@ -102,7 +102,7 @@ public enum FileType {
     private static FileType detectByExtension(Path filePath) {
         String fileName = filePath.getFileName().toString().toLowerCase();
 
-        // Check if file has an extension
+
         if (!fileName.contains(".")) {
             return UNKNOWN;
         }
@@ -125,7 +125,7 @@ public enum FileType {
      */
     private static FileType detectByContent(Path filePath) {
         try {
-            // Read only first 20 lines or 4KB, whichever is smaller
+
             List<String> lines = readFirstLines(filePath, 20);
             if (lines.isEmpty()) {
                 return UNKNOWN;
@@ -133,14 +133,14 @@ public enum FileType {
 
             String content = String.join("\n", lines);
 
-            // Check for shebang line for script files
+
             if (content.startsWith("#!/usr/bin/env node") ||
                     content.startsWith("#!/bin/node") ||
                     content.startsWith("#!/usr/bin/node")) {
                 return JAVASCRIPT;
             }
 
-            // Fast checks based on most distinctive patterns first
+
             if (content.contains("public class") ||
                     content.contains("package ") ||
                     content.contains("import java.")) {
@@ -151,25 +151,25 @@ public enum FileType {
                 return JAVA;
             }
 
-            // Check for TypeScript first (more specific than JavaScript)
+
             if (TYPESCRIPT_PATTERN.matcher(content).find()) {
-                // Further check if it's TSX
+
                 if (JSX_PATTERN.matcher(content).find()) {
                     return TSX;
                 }
                 return TYPESCRIPT;
             }
 
-            // Check for React/JSX patterns
+
             if (REACT_PATTERN.matcher(content).find()) {
-                // Further check if it's JSX
+
                 if (JSX_PATTERN.matcher(content).find()) {
                     return JSX;
                 }
                 return JAVASCRIPT;
             }
 
-            // Check for general JavaScript patterns
+
             if (content.contains("function ") ||
                     content.contains("const ") ||
                     content.contains("let ") ||
@@ -182,7 +182,7 @@ public enum FileType {
             return UNKNOWN;
         } catch (IOException e) {
             logger.log(Level.FINE, "Error reading file for type detection: " + filePath, e);
-            // If we can't read the file, return UNKNOWN
+
             return UNKNOWN;
         }
     }
@@ -194,9 +194,9 @@ public enum FileType {
     private static List<String> readFirstLines(Path filePath, int maxLines) throws IOException {
         List<String> lines = new ArrayList<>();
         try {
-            // First try with UTF-8
+
             byte[] bytes = Files.readAllBytes(filePath);
-            // Limit to first 4KB to avoid large files
+
             int bytesToRead = Math.min(bytes.length, 4096);
             String content = new String(bytes, 0, bytesToRead, StandardCharsets.UTF_8);
 
@@ -207,13 +207,13 @@ public enum FileType {
 
             return lines;
         } catch (IOException e) {
-            // Try with different encoding if UTF-8 fails
+
             try {
                 return Files.lines(filePath)
                         .limit(maxLines)
                         .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
             } catch (IOException e2) {
-                // If all reading attempts fail, return empty list
+
                 logger.log(Level.FINE, "Could not read file: " + filePath, e2);
                 return new ArrayList<>();
             }

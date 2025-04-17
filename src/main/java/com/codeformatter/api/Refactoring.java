@@ -16,7 +16,7 @@ public class Refactoring {
         this.description = description;
     }
     
-    // Getters
+
     public String getType() { return type; }
     public int getStartLine() { return startLine; }
     public int getEndLine() { return endLine; }

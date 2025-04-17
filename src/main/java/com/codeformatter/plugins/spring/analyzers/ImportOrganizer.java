@@ -59,9 +59,9 @@ public class ImportOrganizer implements CodeAnalyzer {
 
         _checkDuplicateImports(imports, errors);
 
-        // TODO
-        // Check for unused imports (this would require more complex analysis)
-        // For a simple implementation, we'll just check for static imports not being used
+
+
+
 
         return new AnalyzerResult(errors);
     }

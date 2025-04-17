@@ -41,11 +41,11 @@ public class FormatterCli {
                 System.exit(1);
             }
 
-            // Check for color disabling early
+
             boolean useColors = !_hasOption(args, "--no-color");
             errorFormatter = new ErrorFormatter(useColors);
 
-            // Configure logging level based on verbose flag
+
             if (_hasOption(args, "--verbose")) {
                 LoggerUtil.setConsoleLevel(Level.FINE);
             } else {
@@ -134,7 +134,7 @@ public class FormatterCli {
             System.exit(1);
         }
 
-        // Parse optional arguments
+
         boolean verbose = _hasOption(args, "--verbose");
         boolean ciMode = _hasOption(args, "--ci");
         String configFile = _getOptionValue(args, "--config");
@@ -149,7 +149,7 @@ public class FormatterCli {
             }
         }
 
-        // Load configuration
+
         FormatterConfig config;
         if (configFile != null) {
             _printInfo("Using config file: " + configFile);
@@ -158,7 +158,7 @@ public class FormatterCli {
             config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
         }
 
-        // Create and configure formatter
+
         try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose)) {
             AtomicInteger fileCount = new AtomicInteger(0);
             AtomicInteger errorCount = new AtomicInteger(0);
@@ -166,7 +166,7 @@ public class FormatterCli {
             AtomicInteger successCount = new AtomicInteger(0);
             AtomicLong totalLines = new AtomicLong(0);
 
-            // Find files to format
+
             List<Path> filesToFormat = _findFiles(path,
                     config.getGeneralConfig("ignoreFiles", new ArrayList<String>()),
                     includePattern);
@@ -175,10 +175,10 @@ public class FormatterCli {
 
             Instant start = Instant.now();
 
-            // Track all errors for summary report
+
             Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
 
-            // Process each file
+
             for (Path file : filesToFormat) {
                 try {
                     if (verbose) {
@@ -191,7 +191,7 @@ public class FormatterCli {
                     FormatterResult result = formatter.formatFile(file, source);
 
                     if (result.isSuccessful()) {
-                        // Only write if content actually changed
+
                         if (!source.equals(result.getFormattedCode())) {
                             Files.writeString(file, result.getFormattedCode());
 
@@ -212,10 +212,10 @@ public class FormatterCli {
                     } else {
                         _printError("Failed to format: " + file);
 
-                        // Store errors for summary
+
                         errorsByFile.put(file, result.getErrors());
 
-                        // Print detailed errors
+
                         result.getErrors().forEach(e ->
                                 _printError("  " + errorFormatter.formatError(e)));
                         errorCount.incrementAndGet();
@@ -226,7 +226,7 @@ public class FormatterCli {
                     _printError("Error processing file: " + file);
                     _printError("  " + e.getMessage());
 
-                    // Store the error
+
                     List<FormatterError> errors = new ArrayList<>();
                     errors.add(new FormatterError(
                             Severity.FATAL,
@@ -248,7 +248,7 @@ public class FormatterCli {
             Instant end = Instant.now();
             Duration duration = Duration.between(start, end);
 
-            // Print summary
+
             System.out.println("\nFormatting complete in " + _formatDuration(duration) + ":");
             System.out.println("  Processed files: " + fileCount.get());
             System.out.println("  Successfully formatted: " + successCount.get());
@@ -258,7 +258,7 @@ public class FormatterCli {
             }
             System.out.println("  Total lines processed: " + totalLines.get());
 
-            // Print error summary if there were errors
+
             if (!errorsByFile.isEmpty() && !ciMode) {
                 System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
             }

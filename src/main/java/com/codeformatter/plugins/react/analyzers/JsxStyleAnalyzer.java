@@ -126,7 +126,7 @@ public class JsxStyleAnalyzer implements ReactCodeAnalyzer {
         }
 
         if (children.length > 3) {
-            // Again, in a real implementation we would check the actual line breaks
+
             errors.add(new FormatterError(
                     Severity.INFO,
                     "JSX element with many children may be hard to read",

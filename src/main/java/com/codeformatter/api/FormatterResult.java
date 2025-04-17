@@ -62,9 +62,9 @@ public class FormatterResult {
             return this;
         }
 
-        // Add a method to set the entire errors list
+
         public Builder errors(List<FormatterError> errors) {
-            this.errors = new ArrayList<>(errors); // Create a copy to avoid reference issues
+            this.errors = new ArrayList<>(errors);
             return this;
         }
 
@@ -73,9 +73,9 @@ public class FormatterResult {
             return this;
         }
 
-        // Add a method to set the entire refactorings list
+
         public Builder appliedRefactorings(List<Refactoring> refactorings) {
-            this.appliedRefactorings = new ArrayList<>(refactorings); // Create a copy
+            this.appliedRefactorings = new ArrayList<>(refactorings);
             return this;
         }
 

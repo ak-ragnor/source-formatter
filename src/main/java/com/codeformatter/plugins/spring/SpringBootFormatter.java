@@ -50,15 +50,16 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
         analyzers.add(new DesignPatternAnalyzer(config));
         analyzers.add(new SpringComponentAnalyzer(config));
         analyzers.add(new CodeStyleAnalyzer(config));
+        analyzers.add(new JavaConventionAnalyzer(config));
     }
 
     @Override
     public FormatterResult format(Path filePath, String sourceCode) {
-        // Check cache first using a composite key of file path and content hashcode
+
         String cacheKey = filePath.toString() + ":" + sourceCode.hashCode();
         CompilationUnit cu = null;
 
-        // Try to get from cache using read lock
+
         readLock.lock();
         try {
             cu = astCache.get(cacheKey);
@@ -68,7 +69,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
 
         ParseResult<CompilationUnit> parseResult = null;
 
-        // If not in cache, parse it
+
         if (cu == null) {
             JavaParser parser = new JavaParser();
             parseResult = parser.parse(sourceCode);
@@ -80,7 +81,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
             cu = parseResult.getResult().get();
             LexicalPreservingPrinter.setup(cu);
 
-            // Store in cache using write lock
+
             writeLock.lock();
             try {
                 astCache.put(cacheKey, cu);
@@ -92,12 +93,12 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
         List<FormatterError> errors = new ArrayList<>();
         List<Refactoring> appliedRefactorings = new ArrayList<>();
 
-        // Apply all analyzers to find issues
+
         for (CodeAnalyzer analyzer : analyzers) {
             AnalyzerResult analyzerResult = analyzer.analyze(cu);
             errors.addAll(analyzerResult.getErrors());
 
-            // Apply automatic refactorings
+
             if (analyzer.canAutoFix()) {
                 RefactoringResult refactoringResult = analyzer.applyRefactoring(cu);
                 appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
@@ -105,13 +106,13 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
             }
         }
 
-        // Generate the final formatted code
+
         String formattedCode = LexicalPreservingPrinter.print(cu);
 
         boolean successful = errors.stream()
                 .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
 
-        // Use the new errors() method to set the entire list
+
         return FormatterResult.builder()
                 .successful(successful)
                 .formattedCode(formattedCode)
@@ -128,7 +129,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
                                 parseResult.getProblems().get(0).getMessage()),
                 1, 1);
 
-        // Use builder method to add a single error
+
         return FormatterResult.builder()
                 .successful(false)
                 .formattedCode(null)

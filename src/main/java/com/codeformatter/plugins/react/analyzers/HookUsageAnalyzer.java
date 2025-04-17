@@ -9,6 +9,7 @@ import com.codeformatter.plugins.react.JsEngine;
 import com.codeformatter.plugins.react.ReactAnalyzerResult;
 import com.codeformatter.plugins.react.ReactCodeAnalyzer;
 import com.codeformatter.plugins.react.ReactRefactoringResult;
+import com.codeformatter.util.LoggerUtil;
 import org.graalvm.polyglot.Value;
 
 import java.util.*;
@@ -19,7 +20,7 @@ import java.util.logging.Level;
  * Analyzes React Hook usage patterns and detects common issues
  */
 public class HookUsageAnalyzer implements ReactCodeAnalyzer {
-    private static final Logger logger = Logger.getLogger(HookUsageAnalyzer.class.getName());
+    private static final Logger logger = LoggerUtil.getLogger(HookUsageAnalyzer.class.getName());
 
     private final FormatterConfig config;
     private final JsEngine jsEngine;
@@ -476,9 +477,9 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
      */
     private boolean _doesEffectUseExternalVars(JsAst ast, Value effectCallback) {
         try {
-            // TODO
-            // This is a simplified implementation
-            // A complete implementation would need to analyze scope
+
+
+
 
             Value body = effectCallback.getMember("body");
             if (body.hasMember("body") && body.getMember("body").hasArrayElements()) {
@@ -521,10 +522,10 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
      */
     private boolean _doesFunctionUseExternalVars(JsAst ast, Value func) {
         try {
-            // TODO
-            // This is a simplified implementation
-            // A complete implementation would perform proper scope analysis
-            return true; // To be safe, assume it uses external vars
+
+
+
+            return true;
         } catch (Exception e) {
             logger.log(Level.WARNING, "Error analyzing function dependencies", e);
             return false;
@@ -538,9 +539,9 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         try {
             List<Value> calls = new ArrayList<>();
 
-            // TODO
-            // This is a limited implementation
-            // A complete implementation would need to traverse the AST
+
+
+
             if (node.hasMember("type") && node.getMember("type").asString().equals("CallExpression")) {
                 calls.add(node);
             }
@@ -564,9 +565,9 @@ public class HookUsageAnalyzer implements ReactCodeAnalyzer {
         try {
             List<Value> identifiers = new ArrayList<>();
 
-            // TODO
-            // This is a limited implementation
-            // A complete implementation would need to traverse the AST
+
+
+
 
             if (node.hasMember("type") && node.getMember("type").asString().equals("Identifier")) {
                 identifiers.add(node);

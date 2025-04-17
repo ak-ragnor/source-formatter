@@ -133,7 +133,7 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
                 return results;
             }
 
-            // Find all files to process
+
             List<Path> filesToProcess = Files.walk(directory)
                     .filter(Files::isRegularFile)
                     .filter(path -> {
@@ -148,7 +148,7 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
                 return results;
             }
 
-            // Use a thread pool to process files in parallel
+
             try (ExecutorService executor = Executors.newFixedThreadPool(threadCount)) {
 
                 for (Path file : filesToProcess) {

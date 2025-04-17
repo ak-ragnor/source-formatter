@@ -104,8 +104,8 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
         }
 
         for (MethodDeclaration method : clazz.getMethods()) {
-            // TODO
-            // This is a simplified check - just look at method size
+
+
             if (method.getBody().isPresent()) {
                 String methodBody = method.getBody().get().toString();
                 int bodyLineCount = methodBody.split("\n").length;

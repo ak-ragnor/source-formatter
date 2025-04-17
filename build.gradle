@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'application'
     id 'maven-publish'
+    id 'jacoco'
 }
 
 group = 'com.codeformatter'
@@ -17,45 +18,158 @@ repositories {
 }
 
 dependencies {
-    // Core Dependencies
+
     implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.25.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.2'
-    
-    // Spring Boot Analysis
+
+
     implementation 'org.springframework:spring-core:6.0.6'
-    
-    // JavaScript/React Analysis
+
+
     implementation 'org.graalvm.js:js:22.3.1'
     implementation 'org.graalvm.js:js-scriptengine:22.3.1'
-    
-    // CLI
+
+
     implementation 'info.picocli:picocli:4.7.1'
-    
-    // Testing
+
+
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
+    testImplementation 'org.junit.platform:junit-platform-suite:1.9.2'
     testImplementation 'org.mockito:mockito-core:5.2.0'
 }
 
-tasks.named('test') {
-    useJUnitPlatform()
+
+jacoco {
+    toolVersion = "0.8.8"
 }
 
-// Create a fat JAR with all dependencies
+
+test {
+    useJUnitPlatform()
+
+
+    maxHeapSize = "1g"
+
+
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+        showStandardStreams = true
+    }
+
+
+    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
+
+
+    jacoco {
+        enabled = false
+
+    }
+}
+
+
+task unitTest(type: Test) {
+    useJUnitPlatform {
+        includeTags 'unit'
+        excludeTags 'integration', 'slow'
+    }
+
+    jacoco {
+        destinationFile = file("${buildDir}/jacoco/unitTest.exec")
+    }
+}
+
+
+task integrationTest(type: Test) {
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+
+    jacoco {
+        destinationFile = file("${buildDir}/jacoco/integrationTest.exec")
+    }
+}
+
+
+jacocoTestReport {
+    dependsOn test
+
+    reports {
+        xml.required = true
+        csv.required = false
+        html.required = true
+        html.destination file("${buildDir}/reports/jacoco")
+    }
+
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: [
+
+                    "com/codeformatter/cli/FormatterCli.class",
+                    "**/config/*Config.class",
+                    "**/*Exception.class"
+            ])
+        }))
+    }
+}
+
+
+jacocoTestCoverageVerification {
+    dependsOn jacocoTestReport
+
+    violationRules {
+        rule {
+            limit {
+                minimum = 0.70
+            }
+        }
+
+        rule {
+            element = 'CLASS'
+            includes = ['com.codeformatter.core.*', 'com.codeformatter.plugins.*']
+
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.80
+            }
+
+            limit {
+                counter = 'BRANCH'
+                value = 'COVEREDRATIO'
+                minimum = 0.70
+            }
+        }
+    }
+}
+
+
+task testCoverage(type: Test) {
+    group 'Verification'
+    description 'Runs tests and generates coverage report without enforcing minimum coverage'
+
+    finalizedBy jacocoTestReport
+}
+
+
+check.dependsOn jacocoTestCoverageVerification
+
+
 jar {
     manifest {
         attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
     }
-    
+
     from {
         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
     }
-    
+
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-// Create distributable packages
+
 tasks.register('createDistributable', Zip) {
     from jar
     from('src/main/resources/scripts') {
@@ -67,7 +181,7 @@ tasks.register('createDistributable', Zip) {
     }
     from 'README.md'
     from 'LICENSE'
-    
+
     archiveFileName = "advanced-formatter-${version}.zip"
     destinationDirectory = file("$buildDir/distributions")
 }

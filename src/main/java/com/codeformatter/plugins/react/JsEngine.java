@@ -29,12 +29,12 @@ public class JsEngine implements AutoCloseable {
     private final AtomicInteger operationCount = new AtomicInteger(0);
     private boolean closed = false;
 
-    // Resources
+
     private static final String BABEL_PARSER_RESOURCE = "/js/babel-standalone.min.js";
     private static final String PRETTIER_RESOURCE = "/js/prettier.min.js";
     private static final String PARSER_SCRIPT_RESOURCE = "/js/react-parser.js";
 
-    // Resource limits
+
     private static final int MEMORY_LIMIT_MB = 512;
     private static final int EXECUTION_TIMEOUT_SEC = 30;
     private static final int LOCK_TIMEOUT_SEC = 10;
@@ -46,8 +46,8 @@ public class JsEngine implements AutoCloseable {
         context = Context.newBuilder("js")
                 .allowAllAccess(true)
                 .allowExperimentalOptions(true)
-                .option("js.memory-limit", String.valueOf(MEMORY_LIMIT_MB * 1024 * 1024))
-                .option("js.execution-timeout", String.valueOf(EXECUTION_TIMEOUT_SEC * 1000))
+
+
                 .build();
 
         try {
@@ -83,19 +83,34 @@ public class JsEngine implements AutoCloseable {
      * Loads a JavaScript resource into the engine.
      */
     private void _loadResource(String resourcePath) throws IOException {
-        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
-            if (is == null) {
-                logger.severe("Resource not found: " + resourcePath);
-                throw new IOException("Resource not found: " + resourcePath);
-            }
+        InputStream is = null;
 
-            try (InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
-                try {
-                    context.eval(Source.newBuilder("js", reader, resourcePath).build());
-                } catch (Exception e) {
-                    logger.log(Level.SEVERE, "Error evaluating JavaScript: " + resourcePath, e);
-                    throw new IOException("Error loading JavaScript resource: " + e.getMessage(), e);
-                }
+        is = getClass().getResourceAsStream(resourcePath);
+
+        if (is == null) {
+            is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath);
+        }
+
+        if (is == null) {
+            is = ClassLoader.getSystemResourceAsStream(resourcePath.startsWith("/") ?
+                    resourcePath.substring(1) : resourcePath);
+        }
+
+        if (is == null) {
+            logger.severe("Resource not found: " + resourcePath);
+
+            logger.severe("Class path: " + System.getProperty("java.class.path"));
+            logger.severe("Current directory: " + System.getProperty("user.dir"));
+
+            throw new IOException("Resource not found: " + resourcePath);
+        }
+
+        try (InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
+            try {
+                context.eval(Source.newBuilder("js", reader, resourcePath).build());
+            } catch (Exception e) {
+                logger.log(Level.SEVERE, "Error evaluating JavaScript: " + resourcePath, e);
+                throw new IOException("Error loading JavaScript resource: " + e.getMessage(), e);
             }
         }
     }

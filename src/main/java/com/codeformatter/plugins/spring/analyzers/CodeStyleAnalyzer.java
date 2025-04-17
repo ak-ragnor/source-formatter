@@ -23,7 +23,7 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     private final int lineLength;
     private final boolean useTabs;
 
-    // Patterns for code style checks
+
     private static final Pattern CAMEL_CASE_METHOD = Pattern.compile("^[a-z][a-zA-Z0-9]*$");
     private static final Pattern CAMEL_CASE_VARIABLE = Pattern.compile("^[a-z][a-zA-Z0-9]*$");
     private static final Pattern SCREAMING_SNAKE_CASE = Pattern.compile("^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$");
@@ -49,7 +49,7 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
 
     @Override
     public boolean canAutoFix() {
-        // This is a partial implementation - adding true for the basic fixes
+
         return true;
     }
 
@@ -69,9 +69,9 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
         cu.findAll(MethodDeclaration.class).forEach(method -> {
             String methodName = method.getNameAsString();
 
-            // Methods should use camelCase
+
             if (!CAMEL_CASE_METHOD.matcher(methodName).matches()) {
-                if (!methodName.startsWith("_")) { // Ignore methods with underscore prefix (often private helpers)
+                if (!methodName.startsWith("_")) {
                     errors.add(new FormatterError(
                             Severity.WARNING,
                             "Method name '" + methodName + "' doesn't follow camelCase convention",
@@ -117,16 +117,16 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     }
 
     private void _checkLineLengths(CompilationUnit cu, List<FormatterError> errors) {
-        // TODO
-        // This is a simplified check since we don't have direct access to the original source lines
-        // A more accurate implementation would need to use the lexical preservation printer
 
-        // For now, we'll check the string representation of statements for approximate length
+
+
+
+
         cu.findAll(BlockStmt.class).forEach(block -> {
             block.getStatements().forEach(stmt -> {
                 String stmtStr = stmt.toString();
 
-                // Simple check for long lines - this is approximate
+
                 if (stmtStr.length() > lineLength && !stmtStr.contains("\n")) {
                     errors.add(new FormatterError(
                             Severity.INFO,
@@ -162,12 +162,12 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     }
 
     private void _fixLineLengths(CompilationUnit cu, List<Refactoring> refactorings, List<FormatterError> errors) {
-        // TODO
-        // For a real implementation, we would need to use the lexical preservation printer
-        // and manipulate the token stream to add line breaks
 
-        // Since that's complex and beyond the scope of this simple analyzer,
-        // we'll just report that we attempted to fix the issues
+
+
+
+
+
 
         boolean foundLongLines = false;
         for (BlockStmt block : cu.findAll(BlockStmt.class)) {
@@ -191,11 +191,11 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     }
 
     private void _fixMethodChaining(CompilationUnit cu, List<Refactoring> refactorings, List<FormatterError> errors) {
-        // TODO
-        // Like with line lengths, a proper implementation would require lexical preservation
-        // and token manipulation to format method chains
 
-        // For this simplified implementation, we'll just report that we attempted the fix
+
+
+
+
 
         boolean foundLongChains = false;
         for (MethodCallExpr call : cu.findAll(MethodCallExpr.class)) {

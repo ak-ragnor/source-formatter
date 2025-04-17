@@ -48,6 +48,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
         analyzers.add(new StateManagementAnalyzer(config, jsEngine));
         analyzers.add(new JsxStyleAnalyzer(config, jsEngine));
         analyzers.add(new ImportOrganizer(config, jsEngine));
+        analyzers.add(new ReactConventionAnalyzer(config, jsEngine));
     }
 
     @Override
@@ -140,4 +141,5 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
             writeLock.unlock();
         }
     }
+
 }

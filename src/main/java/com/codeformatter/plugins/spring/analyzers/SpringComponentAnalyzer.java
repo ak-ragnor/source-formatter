@@ -213,9 +213,9 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
     }
 
     private void _checkQualifierUsage(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-        // This is a simplified check - in a real implementation,
-        // we would need to analyze the entire application context
-        // to detect multiple beans of the same type
+
+
+
     }
 
 
@@ -295,9 +295,9 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
                     .toList();
 
             if (!missingFields.isEmpty()) {
-                // This is a more complex refactoring that would modify the constructor
-                // For a production implementation, you'd need to handle this case
-                // by updating the constructor parameters and body
+
+
+
             }
 
             if (isAutowired || changed) {
@@ -327,7 +327,7 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
     }
 
     private boolean _addMissingQualifiers(ClassOrInterfaceDeclaration component) {
-        // This would require more complex AST manipulation and context
+
         return false;
     }
 }

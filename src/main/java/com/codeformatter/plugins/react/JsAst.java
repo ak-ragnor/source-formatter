@@ -162,7 +162,7 @@ public class JsAst {
             }
 
             try {
-                // Add a JavaScript traversal function to build the parent map
+
                 ast.getAstValue().getMember("context").invokeMember("eval",
                         "function buildParentMap(ast) {\n" +
                                 "  const map = new Map();\n" +
@@ -189,11 +189,11 @@ public class JsAst {
                                 "  return map;\n" +
                                 "}\n");
 
-                // Call the function to build the parent map
+
                 Value jsParentMap = ast.getAstValue().getMember("context").invokeMember(
                         "eval", "buildParentMap(currentAst)");
 
-                // Convert the JavaScript Map to our Java Map
+
                 Value keys = jsParentMap.invokeMember("keys");
                 Value keysIterator = keys.invokeMember("next");
 

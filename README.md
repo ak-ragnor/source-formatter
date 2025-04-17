@@ -22,7 +22,7 @@ An advanced code formatter and analyzer for Spring Boot and React JS codebases t
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/advanced-formatter.git
+git clone https:
 cd advanced-formatter
 
 # Build the project

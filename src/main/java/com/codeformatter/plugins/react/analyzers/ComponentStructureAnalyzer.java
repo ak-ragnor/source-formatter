@@ -62,10 +62,10 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
         List<Refactoring> refactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
-        // TODO
-        // Apply transformations to extract components
-        // This is a complex operation that would require manipulating the AST
-        // For this simplified implementation, we'll try to use the built-in transformation
+
+
+
+
 
         Map<String, Object> options = new HashMap<>();
         options.put("maxComponentLines", maxComponentLines);
@@ -271,9 +271,9 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
     }
 
     private int _estimateComponentSize(JsAst ast, Value component) {
-        // TODO
-        // For a more accurate size, we would need to look at the original source code
-        // This is just a rough estimation based on the AST structure
+
+
+
 
         if (component.hasMember("loc") &&
                 component.getMember("loc").hasMember("start") &&
@@ -293,7 +293,7 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
             }
         }
 
-        return 20; // default fallback estimate
+        return 20;
     }
 
     private int _countProps(Value component) {
@@ -315,17 +315,17 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
             return (int)component.getMember("params").getArraySize();
         }
 
-        // TODO
-        // For class components, we would need to look for propTypes or defaultProps
-        // This is a simplified implementation
+
+
+
         return 0;
     }
 
     private int _findMaxJsxNestingDepth(JsAst ast, Value component) {
-        // TODO
-        // Find JSX in the component body
-        // For a complete implementation, we would need to traverse the AST
-        // This is a simplified version that just checks for JSXElements
+
+
+
+
 
         Value[] jsxElements = ast.findNodes("JSXElement");
 
