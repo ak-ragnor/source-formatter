@@ -62,44 +62,63 @@ public class ComponentStructureAnalyzer implements ReactCodeAnalyzer {
         List<Refactoring> refactorings = new ArrayList<>();
         List<FormatterError> errors = new ArrayList<>();
 
+        // Find function components that are too large
+        List<Value> largeComponents = new ArrayList<>();
 
+        List<Value> functionComponents = _findFunctionComponents(ast);
+        for (Value component : functionComponents) {
+            int size = _estimateComponentSize(ast, component);
+            if (size > maxComponentLines) {
+                largeComponents.add(component);
+            }
+        }
 
+        List<Value> classComponents = _findClassComponents(ast);
+        for (Value component : classComponents) {
+            int size = _estimateComponentSize(ast, component);
+            if (size > maxComponentLines) {
+                largeComponents.add(component);
+            }
+        }
 
+        if (!largeComponents.isEmpty()) {
+            Map<String, Object> options = new HashMap<>();
+            options.put("maxComponentLines", maxComponentLines);
 
+            boolean success = jsEngine.transformAst(ast, "extractComponent", options);
 
-        Map<String, Object> options = new HashMap<>();
-        options.put("maxComponentLines", maxComponentLines);
+            if (success) {
+                for (Value component : largeComponents) {
+                    String componentName = "Unknown";
+                    if (component.hasMember("id") && !component.getMember("id").isNull()) {
+                        componentName = ast.getStringProperty(component.getMember("id"), "name");
+                    }
 
-        boolean success = jsEngine.transformAst(ast, "extractComponent", options);
+                    int startLine = ast.getNodeLine(component);
+                    // Use a safer way to calculate end line
+                    int endLine = startLine + 30; // Default if we can't get actual size
+                    try {
+                        endLine = startLine + _estimateComponentSize(ast, component);
+                    } catch (Exception e) {
+                        // Fallback to default
+                    }
 
-        if (success) {
-            List<Value> functionComponents = _findFunctionComponents(ast);
-
-            if (!functionComponents.isEmpty()) {
-                Value component = functionComponents.get(0);
-                int startLine = ast.getNodeLine(component);
-                int endLine = startLine + 30;
-
-                refactorings.add(new Refactoring(
-                        "COMPONENT_EXTRACTION",
-                        startLine,
-                        endLine,
-                        "Extracted nested components from large components"
-                ));
+                    refactorings.add(new Refactoring(
+                            "COMPONENT_EXTRACTION",
+                            startLine,
+                            endLine,
+                            "Extracted nested components from " + componentName
+                    ));
+                }
             } else {
-                refactorings.add(new Refactoring(
-                        "COMPONENT_EXTRACTION",
-                        1, 1,
-                        "Extracted nested components from large components"
+                errors.add(new FormatterError(
+                        Severity.WARNING,
+                        "Could not automatically extract components",
+                        largeComponents.isEmpty() ? 1 : ast.getNodeLine(largeComponents.get(0)),
+                        largeComponents.isEmpty() ? 1 : ast.getNodeColumn(largeComponents.get(0)),
+                        "Consider manually breaking down large components into smaller ones"
                 ));
             }
-        } else {
-            errors.add(new FormatterError(
-                    Severity.WARNING,
-                    "Could not automatically extract components",
-                    1, 1,
-                    "Consider manually breaking down large components into smaller ones"
-            ));
         }
 
         return new ReactRefactoringResult(refactorings, errors);

@@ -213,9 +213,59 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
     }
 
     private void _checkQualifierUsage(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+        // Look for autowired fields without qualifiers that might need them
+        component.getFields().stream()
+                .filter(f -> f.getAnnotations().stream()
+                        .anyMatch(a -> a.getNameAsString().equals("Autowired")))
+                .forEach(f -> {
+                    boolean hasQualifier = f.getAnnotations().stream()
+                            .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
 
+                    // Fields of interface or abstract class types often need qualifiers
+                    com.github.javaparser.ast.type.Type fieldType = f.getVariable(0).getType();
+                    String typeStr = fieldType.asString();
 
+                    // Fields with common Spring interface types should have qualifiers
+                    boolean isCommonInterface = typeStr.contains("Repository") ||
+                            typeStr.contains("Service") ||
+                            typeStr.contains("Dao") ||
+                            typeStr.contains("Component");
 
+                    // Collections of Spring beans always need qualifiers
+                    boolean isCollection = typeStr.startsWith("List<") ||
+                            typeStr.startsWith("Set<") ||
+                            typeStr.startsWith("Collection<") ||
+                            typeStr.startsWith("Map<");
+
+                    if (!hasQualifier && (isCommonInterface || isCollection)) {
+                        errors.add(new FormatterError(
+                                Severity.WARNING,
+                                "Autowired field '" + f.getVariable(0).getNameAsString() +
+                                        "' might need a @Qualifier annotation",
+                                f.getBegin().get().line,
+                                f.getBegin().get().column,
+                                "Add @Qualifier to specify which bean to inject"
+                        ));
+                    }
+
+                    // Check if there are multiple fields of the same type
+                    if (!hasQualifier && !isCollection) {
+                        long fieldCount = component.getFields().stream()
+                                .filter(otherField -> !otherField.equals(f))
+                                .filter(otherField -> otherField.getVariable(0).getType().equals(fieldType))
+                                .count();
+
+                        if (fieldCount > 0) {
+                            errors.add(new FormatterError(
+                                    Severity.WARNING,
+                                    "Multiple fields of type '" + typeStr + "' found without @Qualifier",
+                                    f.getBegin().get().line,
+                                    f.getBegin().get().column,
+                                    "Add @Qualifier to disambiguate which bean to inject"
+                            ));
+                        }
+                    }
+                });
     }
 
 
@@ -327,7 +377,89 @@ public class SpringComponentAnalyzer implements CodeAnalyzer {
     }
 
     private boolean _addMissingQualifiers(ClassOrInterfaceDeclaration component) {
+        boolean changed = false;
 
-        return false;
+        // Find field types that occur multiple times
+        Map<String, List<com.github.javaparser.ast.body.FieldDeclaration>> fieldsByType = new HashMap<>();
+
+        for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
+            if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
+                com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
+                String typeStr = fieldType.asString();
+
+                fieldsByType.computeIfAbsent(typeStr, k -> new ArrayList<>()).add(field);
+            }
+        }
+
+        // Add qualifiers to fields with duplicate types
+        for (Map.Entry<String, List<com.github.javaparser.ast.body.FieldDeclaration>> entry : fieldsByType.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                for (com.github.javaparser.ast.body.FieldDeclaration field : entry.getValue()) {
+                    boolean hasQualifier = field.getAnnotations().stream()
+                            .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+                    if (!hasQualifier) {
+                        // Generate qualifier name from field name
+                        String fieldName = field.getVariable(0).getNameAsString();
+
+                        // Create a new qualifier annotation
+                        com.github.javaparser.ast.expr.StringLiteralExpr qualifierValue =
+                                new com.github.javaparser.ast.expr.StringLiteralExpr(fieldName);
+
+                        // Create the name directly with a simple name
+                        com.github.javaparser.ast.expr.Name qualifierName =
+                                new com.github.javaparser.ast.expr.Name("Qualifier");
+
+                        com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
+                                new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
+                                        qualifierName,
+                                        qualifierValue);
+
+                        field.addAnnotation(qualifierAnnotation);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // Also add qualifiers for collection types
+        for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
+            if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
+                com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
+                String typeStr = fieldType.asString();
+                boolean isCollection = typeStr.startsWith("List<") ||
+                        typeStr.startsWith("Set<") ||
+                        typeStr.startsWith("Collection<");
+
+                boolean hasQualifier = field.getAnnotations().stream()
+                        .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+                if (isCollection && !hasQualifier) {
+                    // Extract the element type from the collection
+                    String elementType = typeStr.substring(typeStr.indexOf('<') + 1, typeStr.lastIndexOf('>'));
+
+                    // Create a qualifier based on a pluralized element type
+                    String qualifierValue = elementType.toLowerCase() + "s";
+
+                    // Create a new qualifier annotation
+                    com.github.javaparser.ast.expr.StringLiteralExpr qualifierStringExpr =
+                            new com.github.javaparser.ast.expr.StringLiteralExpr(qualifierValue);
+
+                    // Create the name directly with a simple name
+                    com.github.javaparser.ast.expr.Name qualifierName =
+                            new com.github.javaparser.ast.expr.Name("Qualifier");
+
+                    com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
+                            new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
+                                    qualifierName,
+                                    qualifierStringExpr);
+
+                    field.addAnnotation(qualifierAnnotation);
+                    changed = true;
+                }
+            }
+        }
+
+        return changed;
     }
 }

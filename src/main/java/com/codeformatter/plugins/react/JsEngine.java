@@ -8,6 +8,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -15,6 +18,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * JavaScript engine bridge implementation using GraalJS.
@@ -86,28 +90,40 @@ public class JsEngine implements AutoCloseable {
         InputStream is = null;
 
         is = getClass().getResourceAsStream(resourcePath);
-
         if (is == null) {
+            logger.severe("Failed to load resource with getClass().getResourceAsStream(): " + resourcePath);
             is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath);
         }
 
         if (is == null) {
+            logger.severe("Failed to load resource with Thread context ClassLoader: " + resourcePath);
             is = ClassLoader.getSystemResourceAsStream(resourcePath.startsWith("/") ?
                     resourcePath.substring(1) : resourcePath);
         }
 
         if (is == null) {
             logger.severe("Resource not found: " + resourcePath);
-
             logger.severe("Class path: " + System.getProperty("java.class.path"));
             logger.severe("Current directory: " + System.getProperty("user.dir"));
+
+            // List files in js directory to debug
+            try {
+                Path jsDir = Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "js");
+                logger.severe("Content of js directory: " +
+                        Files.list(jsDir).map(p -> p.getFileName().toString())
+                                .collect(Collectors.joining(", ")));
+            } catch (Exception e) {
+                logger.severe("Failed to list js directory: " + e.getMessage());
+            }
 
             throw new IOException("Resource not found: " + resourcePath);
         }
 
         try (InputStreamReader reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
             try {
+                logger.info("Loading JavaScript resource: " + resourcePath);
                 context.eval(Source.newBuilder("js", reader, resourcePath).build());
+                logger.info("Successfully loaded JavaScript resource: " + resourcePath);
             } catch (Exception e) {
                 logger.log(Level.SEVERE, "Error evaluating JavaScript: " + resourcePath, e);
                 throw new IOException("Error loading JavaScript resource: " + e.getMessage(), e);

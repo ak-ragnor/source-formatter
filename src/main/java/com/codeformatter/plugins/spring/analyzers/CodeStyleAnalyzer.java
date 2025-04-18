@@ -162,62 +162,241 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
     }
 
     private void _fixLineLengths(CompilationUnit cu, List<Refactoring> refactorings, List<FormatterError> errors) {
+        boolean hasChanges = false;
 
-
-
-
-
-
-
-        boolean foundLongLines = false;
-        for (BlockStmt block : cu.findAll(BlockStmt.class)) {
+        for (com.github.javaparser.ast.stmt.BlockStmt block : cu.findAll(com.github.javaparser.ast.stmt.BlockStmt.class)) {
             for (int i = 0; i < block.getStatements().size(); i++) {
-                String stmtStr = block.getStatement(i).toString();
+                com.github.javaparser.ast.stmt.Statement stmt = block.getStatement(i);
+                String stmtStr = stmt.toString();
+
                 if (stmtStr.length() > lineLength && !stmtStr.contains("\n")) {
-                    foundLongLines = true;
-                    break;
-                }
-            }
-            if (foundLongLines) break;
-        }
+                    // Try to break this statement into multiple lines
 
-        if (foundLongLines) {
-            refactorings.add(new Refactoring(
-                    "LINE_LENGTH_FIX",
-                    1, 1,
-                    "Attempted to fix long lines by adding line breaks where appropriate"
-            ));
-        }
-    }
+                    if (stmt instanceof com.github.javaparser.ast.stmt.ExpressionStmt) {
+                        com.github.javaparser.ast.expr.Expression expr =
+                                ((com.github.javaparser.ast.stmt.ExpressionStmt) stmt).getExpression();
 
-    private void _fixMethodChaining(CompilationUnit cu, List<Refactoring> refactorings, List<FormatterError> errors) {
+                        if (expr instanceof com.github.javaparser.ast.expr.MethodCallExpr) {
+                            com.github.javaparser.ast.expr.MethodCallExpr methodCall =
+                                    (com.github.javaparser.ast.expr.MethodCallExpr) expr;
 
+                            // Format method call with line breaks
+                            _formatMethodCall(methodCall);
+                            hasChanges = true;
+                        } else if (expr instanceof com.github.javaparser.ast.expr.VariableDeclarationExpr) {
+                            com.github.javaparser.ast.expr.VariableDeclarationExpr varExpr =
+                                    (com.github.javaparser.ast.expr.VariableDeclarationExpr) expr;
 
+                            // Format variable declaration with line breaks
+                            if (varExpr.getVariables().size() > 0) {
+                                com.github.javaparser.ast.body.VariableDeclarator var = varExpr.getVariable(0);
+                                if (var.getInitializer().isPresent()) {
+                                    com.github.javaparser.ast.expr.Expression init = var.getInitializer().get();
 
-
-
-
-        boolean foundLongChains = false;
-        for (MethodCallExpr call : cu.findAll(MethodCallExpr.class)) {
-            if (call.getScope().isPresent() && call.getScope().get() instanceof MethodCallExpr) {
-                MethodCallExpr scope = (MethodCallExpr) call.getScope().get();
-
-                if (scope.getScope().isPresent() && scope.getScope().get() instanceof MethodCallExpr) {
-                    String callStr = call.toString();
-                    if (!callStr.contains("\n") && callStr.length() > 50) {
-                        foundLongChains = true;
-                        break;
+                                    // Format complex initializers with line breaks
+                                    if (init instanceof com.github.javaparser.ast.expr.ObjectCreationExpr) {
+                                        _formatObjectCreation((com.github.javaparser.ast.expr.ObjectCreationExpr) init);
+                                        hasChanges = true;
+                                    } else if (init instanceof com.github.javaparser.ast.expr.ArrayCreationExpr) {
+                                        _formatArrayCreation((com.github.javaparser.ast.expr.ArrayCreationExpr) init);
+                                        hasChanges = true;
+                                    }
+                                }
+                            }
+                        } else if (expr instanceof com.github.javaparser.ast.expr.BinaryExpr) {
+                            // Format binary expressions with line breaks at operators
+                            _formatBinaryExpr((com.github.javaparser.ast.expr.BinaryExpr) expr);
+                            hasChanges = true;
+                        }
                     }
                 }
             }
         }
 
-        if (foundLongChains) {
+        if (hasChanges) {
+            refactorings.add(new Refactoring(
+                    "LINE_LENGTH_FIX",
+                    1, 1,
+                    "Reformatted long lines by adding line breaks and proper indentation"
+            ));
+        }
+    }
+
+    private void _formatMethodCall(com.github.javaparser.ast.expr.MethodCallExpr methodCall) {
+        if (methodCall.getArguments().size() <= 2) {
+            return; // No need to format if just a few arguments
+        }
+
+        // Add position information to force pretty printing with line breaks
+        if (methodCall.getBegin().isPresent() && methodCall.getEnd().isPresent()) {
+            for (int i = 0; i < methodCall.getArguments().size(); i++) {
+                com.github.javaparser.ast.expr.Expression arg = methodCall.getArgument(i);
+
+                // Try to set positions to force argument to appear on a new line
+                if (arg.getBegin().isPresent()) {
+                    arg.setRange(
+                            new com.github.javaparser.Range(
+                                    new com.github.javaparser.Position(
+                                            methodCall.getBegin().get().line + i + 1,
+                                            methodCall.getBegin().get().column + indentSize
+                                    ),
+                                    arg.getEnd().get()
+                            )
+                    );
+                }
+            }
+        }
+    }
+
+    private void _formatObjectCreation(com.github.javaparser.ast.expr.ObjectCreationExpr expr) {
+        if (!expr.getArguments().isEmpty()) {
+            // Format the arguments like a method call but handle differently
+            if (expr.getArguments().size() > 2 && expr.getBegin().isPresent()) {
+                for (int i = 0; i < expr.getArguments().size(); i++) {
+                    com.github.javaparser.ast.expr.Expression arg = expr.getArgument(i);
+
+                    // Try to set positions to force argument to appear on a new line
+                    if (arg.getBegin().isPresent()) {
+                        arg.setRange(
+                                new com.github.javaparser.Range(
+                                        new com.github.javaparser.Position(
+                                                expr.getBegin().get().line + i + 1,
+                                                expr.getBegin().get().column + indentSize
+                                        ),
+                                        arg.getEnd().get()
+                                )
+                        );
+                    }
+                }
+            }
+        }
+
+        if (expr.getAnonymousClassBody().isPresent()) {
+            // Format anonymous class declarations
+            expr.getAnonymousClassBody().get().forEach(member -> {
+                // Position members on separate lines
+                if (member.getBegin().isPresent()) {
+                    member.setRange(
+                            new com.github.javaparser.Range(
+                                    new com.github.javaparser.Position(
+                                            member.getBegin().get().line + 1,
+                                            indentSize
+                                    ),
+                                    member.getEnd().get()
+                            )
+                    );
+                }
+            });
+        }
+    }
+
+    private void _formatArrayCreation(com.github.javaparser.ast.expr.ArrayCreationExpr expr) {
+        if (expr.getInitializer().isPresent()) {
+            com.github.javaparser.ast.expr.ArrayInitializerExpr init = expr.getInitializer().get();
+
+            if (init.getValues().size() > 3) {
+                // Format array initializer with one element per line
+                for (int i = 0; i < init.getValues().size(); i++) {
+                    com.github.javaparser.ast.expr.Expression value = init.getValues().get(i);  // Use getValues().get(i) instead of getValue(i)
+
+                    if (value.getBegin().isPresent()) {
+                        value.setRange(
+                                new com.github.javaparser.Range(
+                                        new com.github.javaparser.Position(
+                                                expr.getBegin().get().line + i + 1,
+                                                expr.getBegin().get().column + indentSize
+                                        ),
+                                        value.getEnd().get()
+                                )
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    private void _formatBinaryExpr(com.github.javaparser.ast.expr.BinaryExpr expr) {
+        // Add a line break before the operator
+        if (expr.getRight().getBegin().isPresent() && expr.getBegin().isPresent()) {
+            expr.getRight().setRange(
+                    new com.github.javaparser.Range(
+                            new com.github.javaparser.Position(
+                                    expr.getBegin().get().line + 1,
+                                    expr.getBegin().get().column + indentSize
+                            ),
+                            expr.getRight().getEnd().get()
+                    )
+            );
+        }
+
+        // If right side is also a binary expression, format it too
+        if (expr.getRight() instanceof com.github.javaparser.ast.expr.BinaryExpr) {
+            _formatBinaryExpr((com.github.javaparser.ast.expr.BinaryExpr) expr.getRight());
+        }
+    }
+
+    private void _fixMethodChaining(CompilationUnit cu, List<Refactoring> refactorings, List<FormatterError> errors) {
+        boolean hasChanges = false;
+
+        List<com.github.javaparser.ast.expr.MethodCallExpr> chainedCalls = new ArrayList<>();
+
+        // Find method chains
+        for (com.github.javaparser.ast.expr.MethodCallExpr call : cu.findAll(com.github.javaparser.ast.expr.MethodCallExpr.class)) {
+            if (call.getScope().isPresent() && call.getScope().get() instanceof com.github.javaparser.ast.expr.MethodCallExpr) {
+                // Count the chain length
+                int chainLength = 1;
+                com.github.javaparser.ast.expr.Expression scope = call.getScope().get();
+
+                while (scope instanceof com.github.javaparser.ast.expr.MethodCallExpr &&
+                        ((com.github.javaparser.ast.expr.MethodCallExpr) scope).getScope().isPresent()) {
+                    chainLength++;
+                    scope = ((com.github.javaparser.ast.expr.MethodCallExpr) scope).getScope().get();
+                }
+
+                if (chainLength > 2) {
+                    chainedCalls.add(call);
+                }
+            }
+        }
+
+        // Process each method chain
+        for (com.github.javaparser.ast.expr.MethodCallExpr topCall : chainedCalls) {
+            // Format the chain by adding line breaks and indentation
+            _formatMethodChain(topCall);
+            hasChanges = true;
+        }
+
+        if (hasChanges) {
             refactorings.add(new Refactoring(
                     "METHOD_CHAIN_FORMAT",
                     1, 1,
-                    "Attempted to fix method chains by adding appropriate line breaks and indentation"
+                    "Reformatted method chains with line breaks and proper indentation"
             ));
         }
+    }
+
+    private void _formatMethodChain(com.github.javaparser.ast.expr.MethodCallExpr methodCall) {
+        if (methodCall.getScope().isEmpty()) return;
+
+        com.github.javaparser.ast.expr.Expression scope = methodCall.getScope().get();
+        if (!(scope instanceof com.github.javaparser.ast.expr.MethodCallExpr)) return;
+
+        com.github.javaparser.ast.expr.MethodCallExpr scopeCall = (com.github.javaparser.ast.expr.MethodCallExpr) scope;
+
+        // Add indentation to have each method call on a new line
+        if (methodCall.getBegin().isPresent() && scopeCall.getBegin().isPresent()) {
+            methodCall.setRange(
+                    new com.github.javaparser.Range(
+                            new com.github.javaparser.Position(
+                                    scopeCall.getBegin().get().line + 1,
+                                    scopeCall.getBegin().get().column + indentSize
+                            ),
+                            methodCall.getEnd().get()
+                    )
+            );
+        }
+
+        // Recursively format the chain
+        _formatMethodChain(scopeCall);
     }
 }

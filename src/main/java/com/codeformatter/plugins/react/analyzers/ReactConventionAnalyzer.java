@@ -61,8 +61,182 @@ public class ReactConventionAnalyzer implements ReactCodeAnalyzer {
 
     @Override
     public ReactRefactoringResult applyRefactoring(JsAst ast) {
-        return new ReactRefactoringResult(new ArrayList<>(), new ArrayList<>());
+        if (!ast.isValid()) {
+            return new ReactRefactoringResult(new ArrayList<>(), new ArrayList<>());
+        }
+
+        List<Refactoring> refactorings = new ArrayList<>();
+        List<FormatterError> errors = new ArrayList<>();
+
+        // Fix import conventions
+        boolean importConventionsApplied = _fixImportConventions(ast);
+        if (importConventionsApplied) {
+            refactorings.add(new Refactoring(
+                    "REACT_IMPORT_CONVENTIONS",
+                    1, 10,
+                    "Applied React import conventions (order and relative imports)"
+            ));
+        }
+
+        // Fix type assertion conventions
+        boolean typeAssertionsFixed = _fixTypeAssertionConventions(ast);
+        if (typeAssertionsFixed) {
+            refactorings.add(new Refactoring(
+                    "REACT_TYPE_ASSERTIONS",
+                    1, 1,
+                    "Improved type assertions with safer approaches"
+            ));
+        }
+
+        // Fix switch statement conventions
+        boolean switchStatementsFixed = _fixSwitchStatementConventions(ast);
+        if (switchStatementsFixed) {
+            refactorings.add(new Refactoring(
+                    "REACT_SWITCH_STATEMENTS",
+                    1, 1,
+                    "Ensured switch statements follow React conventions"
+            ));
+        }
+
+        // If there were no successful refactorings but errors were detected,
+        // report that automated refactoring wasn't possible
+        if (refactorings.isEmpty()) {
+            Value[] imports = ast.findNodes("ImportDeclaration");
+            Value[] assertions = ast.findNodes("TSAsExpression");
+            Value[] switches = ast.findNodes("SwitchStatement");
+
+            if (imports.length > 0 || assertions.length > 0 || switches.length > 0) {
+                int line = 1;
+                int column = 1;
+
+                if (imports.length > 0) {
+                    line = ast.getNodeLine(imports[0]);
+                    column = ast.getNodeColumn(imports[0]);
+                }
+
+                errors.add(new FormatterError(
+                        Severity.INFO,
+                        "Could not automatically apply React conventions",
+                        line,
+                        column,
+                        "Consider manually updating the code to follow React conventions"
+                ));
+            }
+        }
+
+        return new ReactRefactoringResult(refactorings, errors);
     }
+
+    private boolean _fixImportConventions(JsAst ast) {
+        try {
+            Value[] imports = ast.findNodes("ImportDeclaration");
+            if (imports.length < 2) {
+                return false;
+            }
+
+            // Fix import organization to follow React conventions
+            Map<String, Object> options = new HashMap<>();
+            options.put("groups", List.of("react", "external", "internal", "css"));
+
+            return jsEngine.transformAst(ast, "organizeImports", options);
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Error fixing import conventions", e);
+            return false;
+        }
+    }
+
+    private boolean _fixTypeAssertionConventions(JsAst ast) {
+        try {
+            Value[] tsAsExpressions = ast.findNodes("TSAsExpression");
+            Value[] tsNonNullExpressions = ast.findNodes("TSNonNullExpression");
+
+            if (tsAsExpressions.length == 0 && tsNonNullExpressions.length == 0) {
+                return false;
+            }
+
+            boolean modified = false;
+
+            // Use JavaScript's typeguard pattern via babelTraverse
+            JsAst.AstNodeFinder finder = new JsAst.AstNodeFinder(ast);
+
+            for (Value expr : tsAsExpressions) {
+                // Check if it's casting to 'any'
+                if (expr.hasMember("typeAnnotation") &&
+                        expr.getMember("typeAnnotation").hasMember("type") &&
+                        expr.getMember("typeAnnotation").getMember("type").asString().equals("TSAnyKeyword")) {
+
+                    // Replace with 'unknown' which is safer
+                    Map<String, Object> options = new HashMap<>();
+                    options.put("astNodeId", expr.getMember("id").asInt());
+                    options.put("newType", "unknown");
+
+                    boolean success = jsEngine.transformAst(ast, "replaceTypeCast", options);
+                    modified = modified || success;
+                }
+            }
+
+            // Fix non-null assertions by applying a custom transformation
+            for (Value expr : tsNonNullExpressions) {
+                Map<String, Object> options = new HashMap<>();
+                options.put("astNodeId", expr.getMember("id").asInt());
+
+                boolean success = jsEngine.transformAst(ast, "replaceNonNullAssertion", options);
+                modified = modified || success;
+            }
+
+            return modified;
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Error fixing type assertions", e);
+            return false;
+        }
+    }
+
+    private boolean _fixSwitchStatementConventions(JsAst ast) {
+        try {
+            Value[] switchStatements = ast.findNodes("SwitchStatement");
+
+            if (switchStatements.length == 0) {
+                return false;
+            }
+
+            boolean modified = false;
+
+            for (Value switchStmt : switchStatements) {
+                // Check if it has a default case
+                boolean hasDefault = false;
+                boolean defaultIsLast = true;
+
+                if (switchStmt.hasMember("cases") && switchStmt.getMember("cases").hasArrayElements()) {
+                    Value cases = switchStmt.getMember("cases");
+
+                    for (int i = 0; i < cases.getArraySize(); i++) {
+                        Value caseStmt = cases.getArrayElement(i);
+                        if (caseStmt.hasMember("test") && caseStmt.getMember("test").isNull()) {
+                            hasDefault = true;
+                            defaultIsLast = (i == cases.getArraySize() - 1);
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasDefault || !defaultIsLast) {
+                    Map<String, Object> options = new HashMap<>();
+                    options.put("astNodeId", switchStmt.getMember("id").asInt());
+                    options.put("ensureDefault", true);
+                    options.put("moveDefaultToEnd", true);
+
+                    boolean success = jsEngine.transformAst(ast, "fixSwitchStatement", options);
+                    modified = modified || success;
+                }
+            }
+
+            return modified;
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Error fixing switch statements", e);
+            return false;
+        }
+    }
+
 
     /**
      * Check import conventions:

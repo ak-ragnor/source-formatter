@@ -60,68 +60,71 @@ public class IntegrationTest {
 
     private Path createSampleJavaFile() throws IOException {
         Path filePath = tempDir.resolve("Sample.java");
-        String content = "public class   Sample {\n" +
-                "    public void   sampleMethod(  ) {\n" +
-                "
-                "        System.out.println(  \"Sample output\"    );\n" +
-                "        int x   =   5;\n" +
-                "        if (x > 0)    {\n" +
-                "            System.out.println(\"Positive\");\n" +
-                "        }\n" +
-                "    }\n" +
-                "}";
+        String content = """
+                public class   Sample {
+                    public void   sampleMethod(  ) {
+                        // Method with poor formatting
+                        System.out.println(  "Sample output"    );
+                        int x   =   5;
+                        if (x > 0)    {
+                            System.out.println("Positive");
+                        }
+                    }
+                }""";
         Files.writeString(filePath, content);
         return filePath;
     }
 
     private Path createSampleSpringFile() throws IOException {
         Path filePath = tempDir.resolve("SampleService.java");
-        String content = "import org.springframework.beans.factory.annotation.Autowired;\n" +
-                "import org.springframework.stereotype.Service;\n" +
-                "import java.util.List;\n" +
-                "\n" +
-                "@Service\n" +
-                "public class   SampleService {\n" +
-                "    @Autowired\n" +
-                "    private SampleRepository repository;
-                "    \n" +
-                "    public List<String>   getSamples(  ) {\n" +
-                "
-                "        return repository.findAll(  );\n" +
-                "    }\n" +
-                "}\n" +
-                "\n" +
-                "class SampleRepository {\n" +
-                "    public List<String> findAll() {\n" +
-                "        return java.util.Collections.emptyList();\n" +
-                "    }\n" +
-                "}";
+        String content = """
+                import org.springframework.beans.factory.annotation.Autowired;
+                import org.springframework.stereotype.Service;
+                import java.util.List;
+                
+                @Service
+                public class   SampleService {
+                    @Autowired
+                    private SampleRepository repository;
+                   \s
+                    public List<String>   getSamples(  ) {
+                        // Method with poor formatting
+                        return repository.findAll(  );
+                    }
+                }
+                
+                class SampleRepository {
+                    public List<String> findAll() {
+                        return java.util.Collections.emptyList();
+                    }
+                }""";
         Files.writeString(filePath, content);
         return filePath;
     }
 
     private Path createSampleReactFile() throws IOException {
         Path filePath = tempDir.resolve("SampleComponent.jsx");
-        String content = "import './styles.css';\n" +
-                "import React from 'react';\n" +
-                "import { useState } from 'react';\n" +
-                "\n" +
-                "function   SampleComponent( ) {\n" +
-                "    const [count, setCount] = useState(0);\n" +
-                "    \n" +
-                "
-                "    React.useEffect(() => {\n" +
-                "        document.title = `Count: ${count}`;\n" +
-                "    }, []);\n" +
-                "    \n" +
-                "    return (\n" +
-                "        <div    className=\"container\"   >\n" +
-                "            <h1>Sample Component</h1>\n" +
-                "            <p>Count: {count}</p>\n" +
-                "            <button    onClick={() => setCount(count + 1)}   >Increment</button>\n" +
-                "        </div>\n" +
-                "    );\n" +
-                "}";
+        String content = """
+                import './styles.css';
+                import React from 'react';
+                import { useState } from 'react';
+                
+                function   SampleComponent( ) {
+                    const [count, setCount] = useState(0);
+                   \s
+                    // Effect with missing dependency
+                    React.useEffect(() => {
+                        document.title = `Count: ${count}`;
+                    }, []);
+                   \s
+                    return (
+                        <div    className="container"   >
+                            <h1>Sample Component</h1>
+                            <p>Count: {count}</p>
+                            <button    onClick={() => setCount(count + 1)}   >Increment</button>
+                        </div>
+                    );
+                }""";
         Files.writeString(filePath, content);
         return filePath;
     }
@@ -171,7 +174,7 @@ public class IntegrationTest {
         codeBuilder.append("@Service\n");
         codeBuilder.append("public class ProblemService {\n");
         codeBuilder.append("    @Autowired\n");
-        codeBuilder.append("    public DataSource dataSource;
+        codeBuilder.append("    public DataSource dataSource;\n");
 
 
         codeBuilder.append("    public void processData() {\n");
@@ -212,53 +215,52 @@ public class IntegrationTest {
     public void testReactFormatting() throws Exception {
 
         Path componentFile = tempDir.resolve("ProblemComponent.jsx");
-        String reactCode = "import './styles.css';\n" +
-                "import React from 'react';\n" +
-                "import axios from 'axios';\n" +
-                "import { useState, useEffect, useCallback } from 'react';\n" +
-                "\n" +
-                "function ProblemComponent() {\n" +
-                "  const [data, setData] = useState([]);\n" +
-                "  const [loading, setLoading] = useState(false);\n" +
-                "  const [error, setError] = useState(null);\n" +
-                "  const [page, setPage] = useState(1);\n" +
-                "\n" +
-                "
-                "  useEffect(() => {\n" +
-                "    const fetchData = async () => {\n" +
-                "      try {\n" +
-                "        setLoading(true);\n" +
-                "        const response = await axios.get(`https:
-                "        setData(response.data);\n" +
-                "        setError(null);\n" +
-                "      } catch (err) {\n" +
-                "        setError(err.message);\n" +
-                "      } finally {\n" +
-                "        setLoading(false);\n" +
-                "      }\n" +
-                "    };\n" +
-                "    fetchData();\n" +
-                "  }, []);
-                "\n" +
-                "
-                "  const handleNextPage = useCallback(() => {\n" +
-                "    setPage(page + 1);\n" +
-                "  }, []);
-                "\n" +
-                "  return (\n" +
-                "    <div style={{ padding: '20px', margin: '10px', border: '1px solid #ccc' }}>\n" +
-                "      <h1>Data List</h1>\n" +
-                "      {loading && <p>Loading...</p>}\n" +
-                "      {error && <p style={{ color: 'red' }}>{error}</p>}\n" +
-                "      <ul>\n" +
-                "        {data.map(item => (\n" +
-                "          <li key={item.id}>{item.name}</li>\n" +
-                "        ))}\n" +
-                "      </ul>\n" +
-                "      <button onClick={handleNextPage}>Next Page</button>\n" +
-                "    </div>\n" +
-                "  );\n" +
-                "}";
+        String reactCode = """
+                import './styles.css';
+                import React from 'react';
+                import axios from 'axios';
+                import { useState, useEffect, useCallback } from 'react';
+                
+                function ProblemComponent() {
+                  const [data, setData] = useState([]);
+                  const [loading, setLoading] = useState(false);
+                  const [error, setError] = useState(null);
+                  const [page, setPage] = useState(1);
+                
+                  useEffect(() => {
+                    const fetchData = async () => {
+                      try {
+                        setLoading(true);
+                        const response = await axios.get(`https://api.example.com/data?page=${page}`);
+                        setData(response.data);
+                        setError(null);
+                      } catch (err) {
+                        setError(err.message);
+                      } finally {
+                        setLoading(false);
+                      }
+                    };
+                    fetchData();
+                  }, []);
+                
+                  const handleNextPage = useCallback(() => {
+                    setPage(page + 1);
+                  }, []);
+                
+                  return (
+                    <div style={{ padding: '20px', margin: '10px', border: '1px solid #ccc' }}>
+                      <h1>Data List</h1>
+                      {loading && <p>Loading...</p>}
+                      {error && <p style={{ color: 'red' }}>{error}</p>}
+                      <ul>
+                        {data.map(item => (
+                          <li key={item.id}>{item.name}</li>
+                        ))}
+                      </ul>
+                      <button onClick={handleNextPage}>Next Page</button>
+                    </div>
+                  );
+                }""";
 
         Files.writeString(componentFile, reactCode);
 

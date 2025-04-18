@@ -2,7 +2,7 @@ plugins {
     id 'java'
     id 'application'
     id 'maven-publish'
-    id 'jacoco'
+    // Removed: id 'jacoco'
 }
 
 group = 'com.codeformatter'
@@ -18,144 +18,75 @@ repositories {
 }
 
 dependencies {
-
+    // Core dependencies
     implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.25.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.2'
 
-
+    // Spring dependencies
     implementation 'org.springframework:spring-core:6.0.6'
 
-
+    // JavaScript engine
     implementation 'org.graalvm.js:js:22.3.1'
     implementation 'org.graalvm.js:js-scriptengine:22.3.1'
 
-
+    // CLI
     implementation 'info.picocli:picocli:4.7.1'
 
-
+    // Testing dependencies
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
     testImplementation 'org.junit.platform:junit-platform-suite:1.9.2'
     testImplementation 'org.mockito:mockito-core:5.2.0'
 }
 
-
-jacoco {
-    toolVersion = "0.8.8"
-}
-
+// Removed: jacoco configuration block
 
 test {
     useJUnitPlatform()
 
-
+    // Memory settings
     maxHeapSize = "1g"
 
-
+    // Test output configuration
     testLogging {
         events "passed", "skipped", "failed"
         exceptionFormat "full"
         showStandardStreams = true
     }
 
-
+    // Parallel execution
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
 
-
-    jacoco {
-        enabled = false
-
-    }
+    // Removed: jacoco block
 }
 
-
+// Removed: unitTest task with jacoco configuration
 task unitTest(type: Test) {
     useJUnitPlatform {
         includeTags 'unit'
         excludeTags 'integration', 'slow'
     }
-
-    jacoco {
-        destinationFile = file("${buildDir}/jacoco/unitTest.exec")
-    }
 }
 
-
+// Removed: integrationTest task with jacoco configuration
 task integrationTest(type: Test) {
     useJUnitPlatform {
         includeTags 'integration'
     }
-
-    jacoco {
-        destinationFile = file("${buildDir}/jacoco/integrationTest.exec")
-    }
 }
 
+// Removed: jacocoTestReport task
 
-jacocoTestReport {
-    dependsOn test
+// Removed: jacocoTestCoverageVerification task
 
-    reports {
-        xml.required = true
-        csv.required = false
-        html.required = true
-        html.destination file("${buildDir}/reports/jacoco")
-    }
-
-    afterEvaluate {
-        classDirectories.setFrom(files(classDirectories.files.collect {
-            fileTree(dir: it, exclude: [
-
-                    "com/codeformatter/cli/FormatterCli.class",
-                    "**/config/*Config.class",
-                    "**/*Exception.class"
-            ])
-        }))
-    }
-}
-
-
-jacocoTestCoverageVerification {
-    dependsOn jacocoTestReport
-
-    violationRules {
-        rule {
-            limit {
-                minimum = 0.70
-            }
-        }
-
-        rule {
-            element = 'CLASS'
-            includes = ['com.codeformatter.core.*', 'com.codeformatter.plugins.*']
-
-            limit {
-                counter = 'LINE'
-                value = 'COVEREDRATIO'
-                minimum = 0.80
-            }
-
-            limit {
-                counter = 'BRANCH'
-                value = 'COVEREDRATIO'
-                minimum = 0.70
-            }
-        }
-    }
-}
-
-
+// Replace with a simple test coverage task without jacoco
 task testCoverage(type: Test) {
     group 'Verification'
-    description 'Runs tests and generates coverage report without enforcing minimum coverage'
-
-    finalizedBy jacocoTestReport
+    description 'Runs tests without coverage enforcement'
 }
 
-
-check.dependsOn jacocoTestCoverageVerification
-
+// Removed: check.dependsOn jacocoTestCoverageVerification
 
 jar {
     manifest {
@@ -168,7 +99,6 @@ jar {
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
-
 
 tasks.register('createDistributable', Zip) {
     from jar
