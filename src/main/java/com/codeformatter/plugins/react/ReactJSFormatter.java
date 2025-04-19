@@ -6,133 +6,291 @@ import com.codeformatter.api.Refactoring;
 import com.codeformatter.api.error.FormatterError;
 import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
-import com.codeformatter.plugins.react.analyzers.*;
+import com.codeformatter.util.LoggerUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
- * React JS formatter plugin using Babel/TypeScript parser to analyze and refactor React code. This
- * leverages a JavaScript engine bridge (GraalJS, Nashorn, etc.) to use JavaScript-based parsers for
- * accurate React code analysis.
+ * React JS formatter plugin using Node.js tools for formatting and analysis. This implementation
+ * uses NodeJsServer to communicate with a Node.js process for JavaScript/React code processing.
  */
 public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
+  private static final Logger logger = LoggerUtil.getLogger(ReactJSFormatter.class);
+  private static final ObjectMapper objectMapper = new ObjectMapper();
 
   private FormatterConfig config;
-  private List<ReactCodeAnalyzer> analyzers;
-  private JsEngine jsEngine;
-
-  private final Map<String, JsAst> astCache =
-      new LinkedHashMap<String, JsAst>(100, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, JsAst> eldest) {
-          return size() > 100;
-        }
-      };
-
-  private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
-  private final ReentrantReadWriteLock.ReadLock readLock = cacheLock.readLock();
-  private final ReentrantReadWriteLock.WriteLock writeLock = cacheLock.writeLock();
+  private NodeJsServer server;
+  private final Map<String, FormatterResult> resultCache = new ConcurrentHashMap<>();
 
   @Override
   public void initialize(FormatterConfig config) {
     this.config = config;
-    this.jsEngine = new JsEngine();
+    this.server = new NodeJsServer();
 
-    analyzers = new ArrayList<>();
-    analyzers.add(new ComponentStructureAnalyzer(config, jsEngine));
-    analyzers.add(new HookUsageAnalyzer(config, jsEngine));
-    analyzers.add(new StateManagementAnalyzer(config, jsEngine));
-    analyzers.add(new JsxStyleAnalyzer(config, jsEngine));
-    analyzers.add(new ImportOrganizer(config, jsEngine));
-    analyzers.add(new ReactConventionAnalyzer(config, jsEngine));
+    // Configure the formatter from Java config
+    Map<String, Object> formatterOptions = createFormatterOptions(config);
+    try {
+      server.configure(formatterOptions);
+      logger.info("ReactJSFormatter initialized with Node.js server");
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error configuring NodeJsServer: " + e.getMessage(), e);
+    }
+  }
+
+  /** Create formatter options map from FormatterConfig. */
+  private Map<String, Object> createFormatterOptions(FormatterConfig config) {
+    Map<String, Object> options = new HashMap<>();
+
+    // Convert general config to formatter options
+    options.put("printWidth", config.getGeneralConfig("lineLength", 100));
+    options.put("tabWidth", config.getGeneralConfig("indentSize", 2));
+    options.put("useTabs", config.getGeneralConfig("useTabs", false));
+
+    // React specific options
+    options.put("jsxBracketSameLine", false);
+    options.put("singleQuote", true);
+
+    // React plugin configuration
+    Map<String, Object> reactConfig = new HashMap<>();
+    if (config.getPluginConfigsMap().containsKey("react")) {
+      reactConfig.putAll(config.getPluginConfigsMap().get("react"));
+    }
+
+    options.put("maxComponentLines", reactConfig.getOrDefault("maxComponentLines", 150));
+    options.put(
+        "enforceHookDependencies", reactConfig.getOrDefault("enforceHookDependencies", true));
+    options.put("extractComponents", reactConfig.getOrDefault("extractComponents", true));
+    options.put("jsxLineBreakRule", reactConfig.getOrDefault("jsxLineBreakRule", "multiline"));
+
+    return options;
   }
 
   @Override
   public FormatterResult format(Path filePath, String sourceCode) {
-    String cacheKey = filePath.toString() + ":" + sourceCode.hashCode();
-    JsAst ast = null;
-
-    readLock.lock();
-    try {
-      ast = astCache.get(cacheKey);
-    } finally {
-      readLock.unlock();
+    // Early return for empty files
+    if (sourceCode == null || sourceCode.trim().isEmpty()) {
+      return FormatterResult.builder().successful(true).formattedCode(sourceCode).build();
     }
 
-    if (ast == null) {
-      ast = jsEngine.parseReactCode(sourceCode, _isTypeScript(filePath));
+    // Calculate content hash for caching
+    String contentHash = calculateHash(sourceCode);
 
-      if (ast.isValid()) {
-        writeLock.lock();
-        try {
-          astCache.put(cacheKey, ast);
-        } finally {
-          writeLock.unlock();
-        }
-      }
-    }
-
-    if (!ast.isValid()) {
-      return _handleParseError(ast.getError());
+    // Check cache first
+    if (resultCache.containsKey(contentHash)) {
+      logger.fine("Cache hit for " + filePath);
+      return resultCache.get(contentHash);
     }
 
     List<FormatterError> errors = new ArrayList<>();
-    List<Refactoring> appliedRefactorings = new ArrayList<>();
+    List<Refactoring> refactorings = new ArrayList<>();
+    String formattedCode = sourceCode;
 
-    for (ReactCodeAnalyzer analyzer : analyzers) {
-      ReactAnalyzerResult analyzerResult = analyzer.analyze(ast);
-      errors.addAll(analyzerResult.getErrors());
+    try {
+      boolean isReact = isReactFile(filePath, sourceCode);
+      logger.fine("Processing " + filePath + " (React: " + isReact + ")");
 
-      if (analyzer.canAutoFix()) {
-        ReactRefactoringResult refactoringResult = analyzer.applyRefactoring(ast);
-        appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
-        errors.addAll(refactoringResult.getErrors());
+      // Format the code using Node.js server
+      formattedCode = server.formatCode(sourceCode, isReact);
+
+      // Return early if no changes were made (already formatted)
+      if (formattedCode.equals(sourceCode)) {
+        FormatterResult result =
+            FormatterResult.builder().successful(true).formattedCode(formattedCode).build();
+
+        resultCache.put(contentHash, result);
+        return result;
       }
+
+      // Add refactoring info if code was changed
+      refactorings.add(
+          new Refactoring(
+              "FORMATTING",
+              1,
+              countLines(sourceCode),
+              "Applied " + (isReact ? "React" : "JavaScript") + " formatting"));
+
+      // Analyze the code using ESLint
+      List<NodeJsServer.LintIssue> lintIssues = server.analyzeCode(sourceCode, isReact);
+
+      // Convert lint issues to formatter errors
+      errors = convertLintIssuesToErrors(lintIssues);
+
+      // For React files, analyze for hook dependencies
+      if (isReact && config.getPluginConfig("react", "enforceHookDependencies", true)) {
+        addHookDependencyRefactoring(sourceCode, formattedCode, refactorings);
+      }
+
+    } catch (IOException e) {
+      logger.log(Level.WARNING, "Error processing " + filePath + ": " + e.getMessage(), e);
+
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "Error processing with Node.js: " + e.getMessage(),
+              1,
+              1,
+              "Check if Node.js is installed correctly"));
+
+      // Use original code if formatting failed
+      formattedCode = sourceCode;
     }
 
-    String formattedCode = jsEngine.generateCode(ast);
-
+    // Determine if formatting was successful
     boolean successful =
         errors.stream()
             .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
 
-    return FormatterResult.builder()
-        .successful(successful)
-        .formattedCode(formattedCode)
-        .errors(errors)
-        .appliedRefactorings(appliedRefactorings)
-        .build();
+    FormatterResult result =
+        FormatterResult.builder()
+            .successful(successful)
+            .formattedCode(formattedCode)
+            .errors(errors)
+            .appliedRefactorings(refactorings)
+            .build();
+
+    // Cache the result
+    resultCache.put(contentHash, result);
+
+    return result;
   }
 
-  private boolean _isTypeScript(Path filePath) {
-    String fileName = filePath.getFileName().toString().toLowerCase();
-    return fileName.endsWith(".ts") || fileName.endsWith(".tsx");
+  /** Check if hook dependency fixing was applied and add a refactoring if so. */
+  private void addHookDependencyRefactoring(
+      String originalCode, String formattedCode, List<Refactoring> refactorings) {
+    // Simple heuristic: check if empty dependency arrays were modified
+    if (originalCode.contains("useEffect(() => {") && originalCode.contains("}, [])")) {
+      if (formattedCode.contains("}, [") && !formattedCode.contains("}, []")) {
+        refactorings.add(
+            new Refactoring(
+                "HOOK_DEPENDENCIES_FIX",
+                1,
+                countLines(originalCode),
+                "Fixed React hook dependencies"));
+      }
+    }
   }
 
-  private FormatterResult _handleParseError(String errorMessage) {
-    FormatterError error =
-        new FormatterError(
-            Severity.FATAL, "Failed to parse React source code: " + errorMessage, 1, 1);
-
-    return FormatterResult.builder().successful(false).formattedCode(null).addError(error).build();
+  /** Count the number of lines in a string. */
+  private int countLines(String str) {
+    if (str == null || str.isEmpty()) {
+      return 0;
+    }
+    return str.split("\n").length;
   }
 
-  /** Cleans up resources when the formatter is no longer needed. */
+  /** Calculate a hash of the source code for caching. */
+  private String calculateHash(String sourceCode) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      byte[] hash = digest.digest(sourceCode.getBytes());
+
+      // Convert to hex string
+      StringBuilder hexString = new StringBuilder();
+      for (byte b : hash) {
+        String hex = Integer.toHexString(0xff & b);
+        if (hex.length() == 1) hexString.append('0');
+        hexString.append(hex);
+      }
+      return hexString.toString();
+    } catch (NoSuchAlgorithmException e) {
+      logger.warning("Failed to calculate hash, defaulting to code length: " + e.getMessage());
+      return "length-" + sourceCode.length();
+    }
+  }
+
+  /** Convert ESLint issues to formatter errors. */
+  private List<FormatterError> convertLintIssuesToErrors(List<NodeJsServer.LintIssue> lintIssues) {
+    return lintIssues.stream()
+        .map(
+            issue -> {
+              Severity severity;
+              switch (issue.getSeverity()) {
+                case "error":
+                  severity = Severity.ERROR;
+                  break;
+                case "warning":
+                  severity = Severity.WARNING;
+                  break;
+                default:
+                  severity = Severity.INFO;
+              }
+
+              String suggestion = null;
+              if (issue.getRuleId() != null && !issue.getRuleId().isEmpty()) {
+                if (issue.getRuleId().equals("react-hooks/exhaustive-deps")) {
+                  suggestion = "Add all dependencies used in the effect to its dependency array";
+                } else if (issue.getRuleId().equals("react-hooks/rules-of-hooks")) {
+                  suggestion = "Ensure hooks are only called at the top level of your component";
+                } else {
+                  suggestion = "See ESLint rule: " + issue.getRuleId();
+                }
+              }
+
+              return new FormatterError(
+                  severity, issue.getMessage(), issue.getLine(), issue.getColumn(), suggestion);
+            })
+        .collect(Collectors.toList());
+  }
+
+  /** Determine if a file is a React/JSX file based on extension and content. */
+  private boolean isReactFile(Path filePath, String sourceCode) {
+    String fileName = filePath.toString().toLowerCase();
+
+    // Check by extension first
+    if (fileName.endsWith(".jsx") || fileName.endsWith(".tsx")) {
+      return true;
+    }
+
+    // For .js files, check content for React patterns
+    if (fileName.endsWith(".js") || fileName.endsWith(".ts")) {
+      return containsReactCode(sourceCode);
+    }
+
+    return false;
+  }
+
+  /** Check if code contains React patterns. */
+  private boolean containsReactCode(String sourceCode) {
+    return sourceCode.contains("import React")
+        || sourceCode.contains("from 'react'")
+        || sourceCode.contains("from \"react\"")
+        || sourceCode.contains("React.")
+        || (sourceCode.contains("<") && sourceCode.contains("/>"))
+        || sourceCode.contains("useState(")
+        || sourceCode.contains("useEffect(")
+        || sourceCode.contains("useRef(")
+        || sourceCode.contains("useCallback(")
+        || sourceCode.contains("extends Component");
+  }
+
+  /** Clear the formatter's cache. */
+  public void clearCache() {
+    resultCache.clear();
+    logger.info("ReactJSFormatter cache cleared");
+  }
+
+  /** Get the cache size. */
+  public int getCacheSize() {
+    return resultCache.size();
+  }
+
   @Override
   public void close() {
-    if (jsEngine != null) {
-      jsEngine.close();
+    if (server != null) {
+      server.close();
+      logger.info("ReactJSFormatter closed, NodeJsServer stopped");
     }
-
-    writeLock.lock();
-    try {
-      astCache.clear();
-    } finally {
-      writeLock.unlock();
-    }
+    resultCache.clear();
   }
 }

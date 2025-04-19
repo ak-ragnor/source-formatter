@@ -3,6 +3,7 @@ plugins {
     id 'application'
     id 'maven-publish'
     id 'com.diffplug.spotless' version '6.20.0'
+    id 'com.github.node-gradle.node' version '3.5.1'
 }
 
 group = 'com.codeformatter'
@@ -26,7 +27,7 @@ dependencies {
     // Spring dependencies
     implementation 'org.springframework:spring-core:6.0.6'
 
-    // JavaScript engine
+    // JavaScript engine (will be deprecated after migration)
     implementation 'org.graalvm.js:js:22.3.1'
     implementation 'org.graalvm.js:js-scriptengine:22.3.1'
 
@@ -39,6 +40,28 @@ dependencies {
     testImplementation 'org.junit.platform:junit-platform-suite:1.9.2'
     testImplementation 'org.mockito:mockito-core:5.2.0'
 }
+
+// Node.js configuration
+node {
+    version = '16.14.0'
+    download = true
+    workDir = file("${project.buildDir}/nodejs")
+    npmWorkDir = file("${project.buildDir}/npm")
+    nodeProjectDir = file("${project.projectDir}")
+}
+
+task installJsTools(type: NpmTask) {
+    args = ['install']
+}
+
+task processJsResources(type: Copy) {
+    from "${project.projectDir}/node"
+    into "${project.buildDir}/resources/main/node"
+}
+
+// Make sure Java code has access to Node.js resources
+processResources.dependsOn processJsResources
+processResources.dependsOn installJsTools
 
 test {
     useJUnitPlatform()
@@ -118,5 +141,43 @@ spotless {
         removeUnusedImports()
         trimTrailingWhitespace()
         endWithNewline()
+    }
+
+    format 'javascript', {
+        target fileTree('.') {
+            include '**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx'
+            exclude '**/node_modules/**', '**/build/**', '**/dist/**', '**/target/**'
+        }
+
+        prettier().config([
+            'printWidth': 80,
+            'tabWidth': 2,
+            'useTabs': false,
+            'semi': true,
+            'singleQuote': true,
+            'trailingComma': 'es5',
+            'bracketSpacing': true,
+            'jsxBracketSameLine': false,
+            'arrowParens': 'avoid'
+        ])
+
+        endWithNewline()
+        trimTrailingWhitespace()
+    }
+
+    groovyGradle {
+        target '**/*.gradle'
+        greclipse()
+        indentWithSpaces(4)
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+
+    json {
+        target fileTree('.') {
+            include '**/*.json'
+            exclude '**/node_modules/**', '**/build/**'
+        }
+        prettier()
     }
 }

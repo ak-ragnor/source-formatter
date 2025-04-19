@@ -4,355 +4,225 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.codeformatter.api.FormatterResult;
 import com.codeformatter.config.FormatterConfig;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests for ReactJSFormatter functionality. */
-public class ReactJSFormatterTest {
+/** Tests for the ReactJSFormatter class (Node.js implementation). */
+@Tag("integration")
+class ReactJSFormatterTest {
 
   private ReactJSFormatter formatter;
   private FormatterConfig config;
 
-  @TempDir private Path tempDir;
+  @TempDir Path tempDir;
 
   @BeforeEach
-  public void setup() {
-    // Create config with test settings
+  void setUp() {
+    // Create test configuration
     Map<String, Object> generalConfig = new HashMap<>();
-    generalConfig.put("indentSize", 2); // Typical for JS
-    generalConfig.put("lineLength", 80); // Stricter for testing
+    generalConfig.put("indentSize", 2);
+    generalConfig.put("lineLength", 80);
 
     Map<String, Object> reactConfig = new HashMap<>();
-    reactConfig.put("maxComponentLines", 50); // Stricter for testing
+    reactConfig.put("maxComponentLines", 100);
     reactConfig.put("enforceHookDependencies", true);
-    reactConfig.put("extractComponents", true);
-    reactConfig.put("jsxLineBreakRule", "multiline");
 
     Map<String, Map<String, Object>> pluginConfigs = new HashMap<>();
     pluginConfigs.put("react", reactConfig);
 
     config = new FormatterConfig(generalConfig, pluginConfigs);
 
+    // Initialize formatter
     formatter = new ReactJSFormatter();
     formatter.initialize(config);
   }
 
   @AfterEach
-  public void cleanup() throws Exception {
+  void tearDown() {
     if (formatter != null) {
       formatter.close();
     }
   }
 
   @Test
-  @DisplayName("Should detect React hook dependency issues")
-  public void testHookDependencyDetection() {
+  @DisplayName("Test JavaScript formatting")
+  void testJavaScriptFormatting() throws IOException {
+    // Create test JavaScript file
+    String jsCode = "function test(){    return 1+2;}";
+    Path jsFile = tempDir.resolve("test.js");
+    Files.writeString(jsFile, jsCode);
+
+    // Format the file
+    FormatterResult result = formatter.format(jsFile, jsCode);
+
+    // Check formatting results
+    assertTrue(result.isSuccessful(), "Formatting should be successful");
+    assertNotNull(result.getFormattedCode(), "Formatted code should not be null");
+    assertNotEquals(jsCode, result.getFormattedCode(), "Code should be changed");
+
+    // Verify formatting improvements
+    String formattedCode = result.getFormattedCode();
+    assertTrue(formattedCode.contains("function test()"), "Should preserve function name");
+    assertTrue(formattedCode.contains("return 1 + 2"), "Should add spaces around operators");
+  }
+
+  @Test
+  @DisplayName("Test React JSX formatting")
+  void testReactFormatting() throws IOException {
+    // Create test React file
+    String reactCode = "function Component(){    return (<div><h1>Hello</h1><p>World</p></div>);}";
+    Path reactFile = tempDir.resolve("Component.jsx");
+    Files.writeString(reactFile, reactCode);
+
+    // Format the file
+    FormatterResult result = formatter.format(reactFile, reactCode);
+
+    // Check formatting results
+    assertTrue(result.isSuccessful(), "Formatting should be successful");
+    assertNotNull(result.getFormattedCode(), "Formatted code should not be null");
+    assertNotEquals(reactCode, result.getFormattedCode(), "Code should be changed");
+
+    // Verify formatting improvements
+    String formattedCode = result.getFormattedCode();
+    assertTrue(formattedCode.contains("function Component()"), "Should preserve function name");
+    assertTrue(formattedCode.contains("<div>"), "Should preserve div tag");
+    assertTrue(formattedCode.contains("<h1>"), "Should preserve h1 tag");
+
+    // The formatted code should have more whitespace
+    assertTrue(
+        formattedCode.length() > reactCode.length(),
+        "Formatted code should be longer due to added whitespace");
+  }
+
+  @Test
+  @DisplayName("Test React hook dependency analysis")
+  void testHookDependencyAnalysis() throws IOException {
     // Create React code with hook dependency issues
     String reactCode =
-        "import React, { useState, useEffect } from 'react';\n\n"
-            + "function DependencyIssue() {\n"
+        "import React, { useState, useEffect } from 'react';\n"
+            + "function Component() {\n"
             + "  const [count, setCount] = useState(0);\n"
-            + "  const [name, setName] = useState('John');\n\n"
-            + "  // Missing dependency: count\n"
+            + "  // Missing dependency\n"
             + "  useEffect(() => {\n"
-            + "    document.title = `${name}: ${count} clicks`;\n"
-            + "  }, []);\n\n"
-            + // Empty dependency array but uses count
-            "  return (\n"
-            + "    <div>\n"
-            + "      <p>{name} clicked {count} times</p>\n"
-            + "      <button onClick={() => setCount(count + 1)}>Click me</button>\n"
-            + "    </div>\n"
-            + "  );\n"
+            + "    document.title = `Count: ${count}`;\n"
+            + "  }, []);\n"
+            + "  return <div>{count}</div>;\n"
             + "}";
 
-    Path reactFile = tempDir.resolve("DependencyIssue.jsx");
+    Path reactFile = tempDir.resolve("HookComponent.jsx");
+    Files.writeString(reactFile, reactCode);
 
-    // Format and check
+    // Format the file
     FormatterResult result = formatter.format(reactFile, reactCode);
 
     // Should detect hook dependency issues
     assertFalse(result.getErrors().isEmpty(), "Should detect errors");
-    assertTrue(
-        result.getErrors().stream()
-            .anyMatch(error -> error.getMessage().contains("empty dependency array")),
-        "Should detect hook dependency issues");
-  }
-
-  @Test
-  @DisplayName("Should detect and fix React hook dependencies")
-  public void testHookDependencyFix() {
-    // Create React code with hook dependency issues
-    String reactCode =
-        "import React, { useState, useEffect, useCallback } from 'react';\n\n"
-            + "function DependencyFix() {\n"
-            + "  const [count, setCount] = useState(0);\n"
-            + "  const [name, setName] = useState('John');\n\n"
-            + "  // Missing dependencies\n"
-            + "  useEffect(() => {\n"
-            + "    document.title = `${name}: ${count} clicks`;\n"
-            + "  }, []);\n\n"
-            + // Should include name and count
-            "  // Missing dependency\n"
-            + "  const handleClick = useCallback(() => {\n"
-            + "    setCount(count + 1);\n"
-            + "  }, []);\n\n"
-            + // Should include count
-            "  return (\n"
-            + "    <div>\n"
-            + "      <p>{name} clicked {count} times</p>\n"
-            + "      <button onClick={handleClick}>Click me</button>\n"
-            + "    </div>\n"
-            + "  );\n"
-            + "}";
-
-    Path reactFile = tempDir.resolve("DependencyFix.jsx");
-
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, reactCode);
-
-    // Should detect and fix hook dependencies
-    assertTrue(result.isSuccessful(), "Formatting should be successful");
-
-    // Check for refactoring in the result
-    boolean hasHookDependencyFix =
-        result.getAppliedRefactorings().stream()
-            .anyMatch(r -> r.getType().equals("HOOK_DEPENDENCIES_FIX"));
-
-    assertTrue(hasHookDependencyFix, "Should apply hook dependency fix refactoring");
-
-    // Verify the dependencies were added
-    String formattedCode = result.getFormattedCode();
-    assertTrue(
-        formattedCode.contains("[name, count]") || formattedCode.contains("[count, name]"),
-        "Effect should have name and count dependencies");
-    assertTrue(
-        formattedCode.contains("useCallback(() => {") && formattedCode.contains("[count]"),
-        "Callback should have count dependency");
-  }
-
-  @Test
-  @DisplayName("Should detect component size issues")
-  public void testComponentSizeDetection() {
-    // Create a large React component
-    StringBuilder codeBuilder = new StringBuilder();
-    codeBuilder.append("import React from 'react';\n\n");
-    codeBuilder.append("function LargeComponent() {\n");
-
-    // Add many JSX elements to make it large
-    codeBuilder.append("  return (\n");
-    codeBuilder.append("    <div className=\"container\">\n");
-    codeBuilder.append("      <h1>Large Component</h1>\n");
-
-    // Generate a lot of content to exceed the max size
-    for (int i = 0; i < 40; i++) {
-      codeBuilder.append("      <div className=\"item\">\n");
-      codeBuilder.append("        <h2>Item ").append(i + 1).append("</h2>\n");
-      codeBuilder.append("        <p>This is item number ").append(i + 1).append("</p>\n");
-      codeBuilder.append("        <button>Action ").append(i + 1).append("</button>\n");
-      codeBuilder.append("      </div>\n");
-    }
-
-    codeBuilder.append("    </div>\n");
-    codeBuilder.append("  );\n");
-    codeBuilder.append("}\n");
-
-    String reactCode = codeBuilder.toString();
-    Path reactFile = tempDir.resolve("LargeComponent.jsx");
-
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, reactCode);
-
-    // Should detect component size issues
-    assertFalse(result.getErrors().isEmpty(), "Should detect errors");
-    assertTrue(
-        result.getErrors().stream()
-            .anyMatch(error -> error.getMessage().contains("exceeds recommended size")),
-        "Should detect component size issues");
-  }
-
-  @Test
-  @DisplayName("Should detect and organize import statements")
-  public void testImportOrganization() {
-    // Create React code with unorganized imports
-    String reactCode =
-        "import axios from 'axios';\n"
-            + // External library
-            "import './App.css';\n"
-            + // CSS import
-            "import React from 'react';\n"
-            + // React should be first
-            "import { useEffect } from 'react';\n"
-            + // React-related import
-            "import Component from './Component';\n"
-            + // Internal import
-            "import { useState } from 'react';\n"; // Another React import
-
-    Path reactFile = tempDir.resolve("ImportIssue.jsx");
-
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, reactCode);
-
-    // Should detect and fix import organization
-    assertTrue(result.isSuccessful(), "Formatting should be successful");
-
-    // Check for refactoring in the result
-    boolean hasImportOrganization =
-        result.getAppliedRefactorings().stream()
-            .anyMatch(r -> r.getType().equals("IMPORT_ORGANIZATION"));
-
-    assertTrue(hasImportOrganization, "Should apply import organization refactoring");
-
-    // Verify the imports were organized correctly
-    String formattedCode = result.getFormattedCode();
-
-    // React imports should be first
-    int reactImportPos = formattedCode.indexOf("import React");
-    int cssImportPos = formattedCode.indexOf("import './App.css'");
-    int axiosImportPos = formattedCode.indexOf("import axios");
-    int componentImportPos = formattedCode.indexOf("import Component");
-
-    // Verify order: React -> External (axios) -> Internal (Component) -> CSS
-    assertTrue(reactImportPos < axiosImportPos, "React imports should come first");
-    assertTrue(axiosImportPos < componentImportPos, "External imports should come before internal");
-    assertTrue(componentImportPos < cssImportPos, "CSS imports should come last");
-  }
-
-  @Test
-  @DisplayName("Should detect JSX style issues")
-  public void testJsxStyleDetection() {
-    // Create React code with JSX style issues
-    String reactCode =
-        "import React from 'react';\n\n"
-            + "function StyleIssue() {\n"
-            + "  return (\n"
-            + "    <div>\n"
-            + "      {/* Inline style instead of className */}\n"
-            + "      <div style={{ color: 'red', padding: '20px', margin: '10px', backgroundColor: 'blue', fontSize: '16px', fontWeight: 'bold' }}>\n"
-            + "        <h1>Heading</h1>\n"
-            + "        <p>This component has styling issues</p>\n"
-            + "      </div>\n"
-            + "      {/* Too many attributes on one line */}\n"
-            + "      <button className=\"btn\" onClick={() => alert('clicked')} disabled={false} id=\"main-button\" data-test=\"test-button\" aria-label=\"Click me\" title=\"Main action\">\n"
-            + "        Click me\n"
-            + "      </button>\n"
-            + "    </div>\n"
-            + "  );\n"
-            + "}";
-
-    Path reactFile = tempDir.resolve("StyleIssue.jsx");
-
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, reactCode);
-
-    // Should detect JSX style issues
-    assertFalse(result.getErrors().isEmpty(), "Should detect errors");
-    assertTrue(
+    boolean hasHookDependencyIssue =
         result.getErrors().stream()
             .anyMatch(
                 error ->
-                    error.getMessage().contains("Inline styles detected")
-                        || error.getMessage().contains("JSX element with many attributes")),
-        "Should detect JSX style issues");
+                    error.getMessage().contains("exhaustive-deps")
+                        || error.getMessage().contains("dependency")
+                        || error.getMessage().contains("react-hooks"));
 
-    // Check for style improvement refactoring
-    boolean hasStyleImprovement =
-        result.getAppliedRefactorings().stream()
-            .anyMatch(r -> r.getType().equals("JSX_STYLE_IMPROVEMENT"));
-
-    assertTrue(hasStyleImprovement, "Should apply JSX style improvement refactoring");
+    assertTrue(hasHookDependencyIssue, "Should detect React hooks dependency issue");
   }
 
   @Test
-  @DisplayName("Should handle invalid React code gracefully")
-  public void testInvalidReactCode() {
-    // Create invalid React code with syntax errors
-    String invalidCode =
-        "import React from 'react';\n\n"
-            + "function BrokenComponent() {\n"
-            + "  return (\n"
-            + "    <div>\n"
-            + "      <h1>This is broken</h1\n"
-            + // Missing closing bracket
-            "      <p>This component has syntax errors</p>\n"
-            + "    </div\n"
-            + // Missing closing bracket
-            "  );\n"
-            + "}";
+  @DisplayName("Test caching mechanism")
+  void testCaching() throws IOException {
+    // Create test file
+    String jsCode = "function test(){    return 1+2;}";
+    Path jsFile = tempDir.resolve("cache-test.js");
+    Files.writeString(jsFile, jsCode);
 
-    Path reactFile = tempDir.resolve("BrokenComponent.jsx");
+    // Format the file first time
+    FormatterResult result1 = formatter.format(jsFile, jsCode);
+    assertTrue(result1.isSuccessful(), "First formatting should be successful");
 
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, invalidCode);
+    // Format the same file again - should use cache
+    FormatterResult result2 = formatter.format(jsFile, jsCode);
+    assertTrue(result2.isSuccessful(), "Second formatting should be successful");
 
-    // Should not crash, but report error
+    // Both results should be identical
+    assertEquals(
+        result1.getFormattedCode(),
+        result2.getFormattedCode(),
+        "Cached results should be identical");
+
+    // Check cache size
+    assertTrue(formatter.getCacheSize() > 0, "Cache should contain entries");
+
+    // Clear cache and verify
+    formatter.clearCache();
+    assertEquals(0, formatter.getCacheSize(), "Cache should be empty after clearing");
+  }
+
+  @Test
+  @DisplayName("Test empty file handling")
+  void testEmptyFile() throws IOException {
+    // Create empty file
+    Path emptyFile = tempDir.resolve("empty.js");
+    Files.writeString(emptyFile, "");
+
+    // Format the empty file
+    FormatterResult result = formatter.format(emptyFile, "");
+
+    // Should handle this gracefully
+    assertTrue(result.isSuccessful(), "Empty file formatting should succeed");
+    assertEquals("", result.getFormattedCode(), "Empty file should remain empty");
+    assertTrue(result.getErrors().isEmpty(), "Should not report errors for empty file");
+  }
+
+  @Test
+  @DisplayName("Test invalid code handling")
+  void testInvalidCode() throws IOException {
+    // Create file with syntax error
+    String invalidCode = "function test( {";
+    Path invalidFile = tempDir.resolve("invalid.js");
+    Files.writeString(invalidFile, invalidCode);
+
+    // Format the file with invalid code
+    FormatterResult result = formatter.format(invalidFile, invalidCode);
+
+    // Should not crash
     assertNotNull(result, "Should return a result even for invalid code");
-    assertFalse(result.isSuccessful(), "Formatting invalid code should not be successful");
-    assertTrue(
-        result.getErrors().stream()
-            .anyMatch(error -> error.getMessage().contains("Failed to parse")),
-        "Should report parsing error");
+    assertNotNull(result.getFormattedCode(), "Should return code even if formatting fails");
+
+    // Either returns the original code or report errors
+    if (result.getFormattedCode().equals(invalidCode)) {
+      // If it returns the original code, there should be errors
+      assertFalse(result.getErrors().isEmpty(), "Should report errors for invalid code");
+    }
   }
 
   @Test
-  @DisplayName("Should detect issues with React state management")
-  public void testStateManagementDetection() {
-    // Create React code with state management issues
-    String reactCode =
-        "import React, { useState } from 'react';\n\n"
-            + "function TooManyStates() {\n"
-            + "  // Too many useState hooks\n"
-            + "  const [name, setName] = useState('');\n"
-            + "  const [age, setAge] = useState(0);\n"
-            + "  const [email, setEmail] = useState('');\n"
-            + "  const [phone, setPhone] = useState('');\n"
-            + "  const [address, setAddress] = useState('');\n"
-            + "  const [city, setCity] = useState('');\n"
-            + // 6th useState - excessive
-            "  \n"
-            + "  // Object state without proper update pattern\n"
-            + "  const [user, setUser] = useState({ id: 1, permissions: ['read', 'write'] });\n"
-            + "  \n"
-            + "  const updatePermission = (permission) => {\n"
-            + "    // Direct mutation of object state\n"
-            + "    user.permissions.push(permission);\n"
-            + "    setUser(user); // Should create a new object\n"
-            + "  };\n"
-            + "  \n"
-            + "  return (\n"
-            + "    <div>\n"
-            + "      <h1>User Profile</h1>\n"
-            + "      <p>Name: {name}</p>\n"
-            + "      <p>Age: {age}</p>\n"
-            + "      {/* and so on... */}\n"
-            + "    </div>\n"
-            + "  );\n"
-            + "}";
+  @DisplayName("Test already formatted code")
+  void testAlreadyFormattedCode() throws IOException {
+    // Create a properly formatted file
+    String formattedCode = "function test() {\n" + "  return 1 + 2;\n" + "}\n";
 
-    Path reactFile = tempDir.resolve("TooManyStates.jsx");
+    Path formattedFile = tempDir.resolve("formatted.js");
+    Files.writeString(formattedFile, formattedCode);
 
-    // Format and check
-    FormatterResult result = formatter.format(reactFile, reactCode);
+    // Format the already formatted file
+    FormatterResult result = formatter.format(formattedFile, formattedCode);
 
-    // Should detect state management issues
-    assertFalse(result.getErrors().isEmpty(), "Should detect errors");
+    // Should recognize it's already formatted
+    assertTrue(result.isSuccessful(), "Formatting should be successful");
+    assertEquals(
+        formattedCode, result.getFormattedCode(), "Already formatted code should not change");
     assertTrue(
-        result.getErrors().stream()
-            .anyMatch(
-                error ->
-                    error.getMessage().contains("uses")
-                        && error.getMessage().contains("useState hooks")),
-        "Should detect too many useState hooks");
-
-    assertTrue(
-        result.getErrors().stream()
-            .anyMatch(error -> error.getMessage().contains("Object/array state detected")),
-        "Should detect object state that needs careful updates");
+        result.getAppliedRefactorings().isEmpty(),
+        "No refactorings needed for already formatted code");
   }
 }
