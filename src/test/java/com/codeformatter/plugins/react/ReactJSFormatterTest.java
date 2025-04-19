@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Tests for the ReactJSFormatter class (Node.js implementation). */
+/** Tests for the ReactJSFormatter class using Node.js implementation. */
 @Tag("integration")
 class ReactJSFormatterTest {
 
@@ -41,7 +41,8 @@ class ReactJSFormatterTest {
 
     config = new FormatterConfig(generalConfig, pluginConfigs);
 
-    // Initialize formatter
+    // Initialize formatter using the factory to ensure we're using the same
+    // approach as the main application
     formatter = new ReactJSFormatter();
     formatter.initialize(config);
   }

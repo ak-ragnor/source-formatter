@@ -27,9 +27,9 @@ dependencies {
     // Spring dependencies
     implementation 'org.springframework:spring-core:6.0.6'
 
-    // JavaScript engine (will be deprecated after migration)
-    implementation 'org.graalvm.js:js:22.3.1'
-    implementation 'org.graalvm.js:js-scriptengine:22.3.1'
+    // JavaScript engine dependencies removed (GraalJS)
+    // implementation 'org.graalvm.js:js:22.3.1'
+    // implementation 'org.graalvm.js:js-scriptengine:22.3.1'
 
     // CLI
     implementation 'info.picocli:picocli:4.7.1'
