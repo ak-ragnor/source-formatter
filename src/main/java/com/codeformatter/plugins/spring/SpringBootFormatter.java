@@ -11,7 +11,6 @@ import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.printer.lexicalpreservation.LexicalPreservingPrinter;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,133 +19,123 @@ import java.util.Map;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
- * Spring Boot code formatter plugin with caching and resource management.
- * This plugin uses JavaParser to analyze and refactor Java code
- * with awareness of Spring Boot specific patterns.
+ * Spring Boot code formatter plugin with caching and resource management. This plugin uses
+ * JavaParser to analyze and refactor Java code with awareness of Spring Boot specific patterns.
  */
 public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
 
-    private FormatterConfig config;
-    private List<CodeAnalyzer> analyzers;
+  private FormatterConfig config;
+  private List<CodeAnalyzer> analyzers;
 
-    private final Map<String, CompilationUnit> astCache = new LinkedHashMap<String, CompilationUnit>(100, 0.75f, true) {
+  private final Map<String, CompilationUnit> astCache =
+      new LinkedHashMap<String, CompilationUnit>(100, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, CompilationUnit> eldest) {
-            return size() > 100;
+          return size() > 100;
         }
-    };
+      };
 
-    private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
-    private final ReentrantReadWriteLock.ReadLock readLock = cacheLock.readLock();
-    private final ReentrantReadWriteLock.WriteLock writeLock = cacheLock.writeLock();
+  private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
+  private final ReentrantReadWriteLock.ReadLock readLock = cacheLock.readLock();
+  private final ReentrantReadWriteLock.WriteLock writeLock = cacheLock.writeLock();
 
-    @Override
-    public void initialize(FormatterConfig config) {
-        this.config = config;
+  @Override
+  public void initialize(FormatterConfig config) {
+    this.config = config;
 
-        analyzers = new ArrayList<>();
-        analyzers.add(new MethodSizeAnalyzer(config));
-        analyzers.add(new ImportOrganizer(config));
-        analyzers.add(new DesignPatternAnalyzer(config));
-        analyzers.add(new SpringComponentAnalyzer(config));
-        analyzers.add(new CodeStyleAnalyzer(config));
-        analyzers.add(new JavaConventionAnalyzer(config));
+    analyzers = new ArrayList<>();
+    analyzers.add(new MethodSizeAnalyzer(config));
+    analyzers.add(new ImportOrganizer(config));
+    analyzers.add(new DesignPatternAnalyzer(config));
+    analyzers.add(new SpringComponentAnalyzer(config));
+    analyzers.add(new CodeStyleAnalyzer(config));
+    analyzers.add(new JavaConventionAnalyzer(config));
+  }
+
+  @Override
+  public FormatterResult format(Path filePath, String sourceCode) {
+
+    String cacheKey = filePath.toString() + ":" + sourceCode.hashCode();
+    CompilationUnit cu = null;
+
+    readLock.lock();
+    try {
+      cu = astCache.get(cacheKey);
+    } finally {
+      readLock.unlock();
     }
 
-    @Override
-    public FormatterResult format(Path filePath, String sourceCode) {
+    ParseResult<CompilationUnit> parseResult = null;
 
-        String cacheKey = filePath.toString() + ":" + sourceCode.hashCode();
-        CompilationUnit cu = null;
+    if (cu == null) {
+      JavaParser parser = new JavaParser();
+      parseResult = parser.parse(sourceCode);
 
+      if (!parseResult.isSuccessful()) {
+        return _handleParseError(parseResult);
+      }
 
-        readLock.lock();
-        try {
-            cu = astCache.get(cacheKey);
-        } finally {
-            readLock.unlock();
-        }
+      cu = parseResult.getResult().get();
+      LexicalPreservingPrinter.setup(cu);
 
-        ParseResult<CompilationUnit> parseResult = null;
-
-
-        if (cu == null) {
-            JavaParser parser = new JavaParser();
-            parseResult = parser.parse(sourceCode);
-
-            if (!parseResult.isSuccessful()) {
-                return _handleParseError(parseResult);
-            }
-
-            cu = parseResult.getResult().get();
-            LexicalPreservingPrinter.setup(cu);
-
-
-            writeLock.lock();
-            try {
-                astCache.put(cacheKey, cu);
-            } finally {
-                writeLock.unlock();
-            }
-        }
-
-        List<FormatterError> errors = new ArrayList<>();
-        List<Refactoring> appliedRefactorings = new ArrayList<>();
-
-
-        for (CodeAnalyzer analyzer : analyzers) {
-            AnalyzerResult analyzerResult = analyzer.analyze(cu);
-            errors.addAll(analyzerResult.getErrors());
-
-
-            if (analyzer.canAutoFix()) {
-                RefactoringResult refactoringResult = analyzer.applyRefactoring(cu);
-                appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
-                errors.addAll(refactoringResult.getErrors());
-            }
-        }
-
-
-        String formattedCode = LexicalPreservingPrinter.print(cu);
-
-        boolean successful = errors.stream()
-                .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
-
-
-        return FormatterResult.builder()
-                .successful(successful)
-                .formattedCode(formattedCode)
-                .errors(errors)
-                .appliedRefactorings(appliedRefactorings)
-                .build();
+      writeLock.lock();
+      try {
+        astCache.put(cacheKey, cu);
+      } finally {
+        writeLock.unlock();
+      }
     }
 
-    private FormatterResult _handleParseError(ParseResult<CompilationUnit> parseResult) {
-        FormatterError error = new FormatterError(
-                Severity.FATAL,
-                "Failed to parse Java source code: " +
-                        (parseResult.getProblems().isEmpty() ? "Unknown error" :
-                                parseResult.getProblems().get(0).getMessage()),
-                1, 1);
+    List<FormatterError> errors = new ArrayList<>();
+    List<Refactoring> appliedRefactorings = new ArrayList<>();
 
+    for (CodeAnalyzer analyzer : analyzers) {
+      AnalyzerResult analyzerResult = analyzer.analyze(cu);
+      errors.addAll(analyzerResult.getErrors());
 
-        return FormatterResult.builder()
-                .successful(false)
-                .formattedCode(null)
-                .addError(error)
-                .build();
+      if (analyzer.canAutoFix()) {
+        RefactoringResult refactoringResult = analyzer.applyRefactoring(cu);
+        appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
+        errors.addAll(refactoringResult.getErrors());
+      }
     }
 
-    /**
-     * Cleans up resources when the formatter is no longer needed.
-     */
-    @Override
-    public void close() {
-        writeLock.lock();
-        try {
-            astCache.clear();
-        } finally {
-            writeLock.unlock();
-        }
+    String formattedCode = LexicalPreservingPrinter.print(cu);
+
+    boolean successful =
+        errors.stream()
+            .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
+
+    return FormatterResult.builder()
+        .successful(successful)
+        .formattedCode(formattedCode)
+        .errors(errors)
+        .appliedRefactorings(appliedRefactorings)
+        .build();
+  }
+
+  private FormatterResult _handleParseError(ParseResult<CompilationUnit> parseResult) {
+    FormatterError error =
+        new FormatterError(
+            Severity.FATAL,
+            "Failed to parse Java source code: "
+                + (parseResult.getProblems().isEmpty()
+                    ? "Unknown error"
+                    : parseResult.getProblems().get(0).getMessage()),
+            1,
+            1);
+
+    return FormatterResult.builder().successful(false).formattedCode(null).addError(error).build();
+  }
+
+  /** Cleans up resources when the formatter is no longer needed. */
+  @Override
+  public void close() {
+    writeLock.lock();
+    try {
+      astCache.clear();
+    } finally {
+      writeLock.unlock();
     }
+  }
 }

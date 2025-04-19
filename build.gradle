@@ -2,7 +2,7 @@ plugins {
     id 'java'
     id 'application'
     id 'maven-publish'
-    // Removed: id 'jacoco'
+    id 'com.diffplug.spotless' version '6.20.0'
 }
 
 group = 'com.codeformatter'
@@ -40,8 +40,6 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:5.2.0'
 }
 
-// Removed: jacoco configuration block
-
 test {
     useJUnitPlatform()
 
@@ -56,37 +54,26 @@ test {
     }
 
     // Parallel execution
-    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
-
-    // Removed: jacoco block
+    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2)?: 1
 }
 
-// Removed: unitTest task with jacoco configuration
-task unitTest(type: Test) {
+tasks.register('unitTest', Test) {
     useJUnitPlatform {
         includeTags 'unit'
         excludeTags 'integration', 'slow'
     }
 }
 
-// Removed: integrationTest task with jacoco configuration
-task integrationTest(type: Test) {
+tasks.register('integrationTest', Test) {
     useJUnitPlatform {
         includeTags 'integration'
     }
 }
 
-// Removed: jacocoTestReport task
-
-// Removed: jacocoTestCoverageVerification task
-
-// Replace with a simple test coverage task without jacoco
-task testCoverage(type: Test) {
+tasks.register('testCoverage', Test) {
     group 'Verification'
     description 'Runs tests without coverage enforcement'
 }
-
-// Removed: check.dependsOn jacocoTestCoverageVerification
 
 jar {
     manifest {
@@ -94,7 +81,7 @@ jar {
     }
 
     from {
-        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+        configurations.runtimeClasspath.collect { it.isDirectory()? it : zipTree(it) }
     }
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -117,3 +104,19 @@ tasks.register('createDistributable', Zip) {
 }
 
 build.dependsOn createDistributable
+
+spotless {
+    java {
+        target fileTree('.') {
+            include '**/*.java'
+            exclude '**/build/**', '**/build-*/**', '**/bin/**'
+        }
+        importOrder()
+        toggleOffOn()
+        cleanthat()
+        googleJavaFormat()
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}

@@ -11,455 +11,487 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.nodeTypes.NodeWithSimpleName;
-
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Analyzes Spring components for common issues:
- * - Proper usage of Spring annotations
- * - Dependency injection issues
- * - Bean naming conventions
- * - Component organization
+ * Analyzes Spring components for common issues: - Proper usage of Spring annotations - Dependency
+ * injection issues - Bean naming conventions - Component organization
  */
 public class SpringComponentAnalyzer implements CodeAnalyzer {
-    private final FormatterConfig config;
-    private final String dependencyInjectionStyle;
+  private final FormatterConfig config;
+  private final String dependencyInjectionStyle;
 
-    private static final Set<String> COMPONENT_ANNOTATIONS = Set.of(
-            "Component", "Service", "Repository", "Controller", "RestController", "Configuration");
+  private static final Set<String> COMPONENT_ANNOTATIONS =
+      Set.of("Component", "Service", "Repository", "Controller", "RestController", "Configuration");
 
-    public SpringComponentAnalyzer(FormatterConfig config) {
-        this.config = config;
-        this.dependencyInjectionStyle = config.getPluginConfig("spring", "enforceDependencyInjection", "constructor");
+  public SpringComponentAnalyzer(FormatterConfig config) {
+    this.config = config;
+    this.dependencyInjectionStyle =
+        config.getPluginConfig("spring", "enforceDependencyInjection", "constructor");
+  }
+
+  @Override
+  public AnalyzerResult analyze(CompilationUnit cu) {
+    List<FormatterError> errors = new ArrayList<>();
+
+    List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
+
+    for (ClassOrInterfaceDeclaration component : springComponents) {
+      _checkDependencyInjection(component, errors);
+      _checkNamingConvention(component, errors);
+      _checkAutowiring(component, errors);
+      _checkQualifierUsage(component, errors);
     }
 
-    @Override
-    public AnalyzerResult analyze(CompilationUnit cu) {
-        List<FormatterError> errors = new ArrayList<>();
+    return new AnalyzerResult(errors);
+  }
 
-        List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
+  @Override
+  public boolean canAutoFix() {
+    return true;
+  }
 
-        for (ClassOrInterfaceDeclaration component : springComponents) {
-            _checkDependencyInjection(component, errors);
-            _checkNamingConvention(component, errors);
-            _checkAutowiring(component, errors);
-            _checkQualifierUsage(component, errors);
-        }
+  @Override
+  public RefactoringResult applyRefactoring(CompilationUnit cu) {
+    List<Refactoring> appliedRefactorings = new ArrayList<>();
+    List<FormatterError> errors = new ArrayList<>();
 
-        return new AnalyzerResult(errors);
+    List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
+
+    for (ClassOrInterfaceDeclaration component : springComponents) {
+      if (_fixDependencyInjection(component)) {
+        appliedRefactorings.add(
+            new Refactoring(
+                "SPRING_DI_FIX",
+                component.getBegin().get().line,
+                component.getEnd().get().line,
+                "Fixed dependency injection style in " + component.getNameAsString()));
+      }
+
+      if (_fixAutowiring(component)) {
+        appliedRefactorings.add(
+            new Refactoring(
+                "SPRING_AUTOWIRING_FIX",
+                component.getBegin().get().line,
+                component.getEnd().get().line,
+                "Fixed autowiring in " + component.getNameAsString()));
+      }
+
+      if (_addMissingQualifiers(component)) {
+        appliedRefactorings.add(
+            new Refactoring(
+                "SPRING_QUALIFIER_FIX",
+                component.getBegin().get().line,
+                component.getEnd().get().line,
+                "Added missing @Qualifier annotations in " + component.getNameAsString()));
+      }
     }
 
-    @Override
-    public boolean canAutoFix() {
-        return true;
-    }
+    return new RefactoringResult(appliedRefactorings, errors);
+  }
 
-    @Override
-    public RefactoringResult applyRefactoring(CompilationUnit cu) {
-        List<Refactoring> appliedRefactorings = new ArrayList<>();
-        List<FormatterError> errors = new ArrayList<>();
+  private List<ClassOrInterfaceDeclaration> _findSpringComponents(CompilationUnit cu) {
+    return cu.findAll(ClassOrInterfaceDeclaration.class).stream()
+        .filter(this::_hasSpringComponentAnnotation)
+        .collect(Collectors.toList());
+  }
 
-        List<ClassOrInterfaceDeclaration> springComponents = _findSpringComponents(cu);
+  private boolean _hasSpringComponentAnnotation(ClassOrInterfaceDeclaration clazz) {
+    return clazz.getAnnotations().stream()
+        .anyMatch(a -> COMPONENT_ANNOTATIONS.contains(a.getNameAsString()));
+  }
 
-        for (ClassOrInterfaceDeclaration component : springComponents) {
-            if (_fixDependencyInjection(component)) {
-                appliedRefactorings.add(new Refactoring(
-                        "SPRING_DI_FIX",
-                        component.getBegin().get().line,
-                        component.getEnd().get().line,
-                        "Fixed dependency injection style in " + component.getNameAsString()
-                ));
-            }
+  private void _checkDependencyInjection(
+      ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
 
-            if (_fixAutowiring(component)) {
-                appliedRefactorings.add(new Refactoring(
-                        "SPRING_AUTOWIRING_FIX",
-                        component.getBegin().get().line,
-                        component.getEnd().get().line,
-                        "Fixed autowiring in " + component.getNameAsString()
-                ));
-            }
-
-            if (_addMissingQualifiers(component)) {
-                appliedRefactorings.add(new Refactoring(
-                        "SPRING_QUALIFIER_FIX",
-                        component.getBegin().get().line,
-                        component.getEnd().get().line,
-                        "Added missing @Qualifier annotations in " + component.getNameAsString()
-                ));
-            }
-        }
-
-        return new RefactoringResult(appliedRefactorings, errors);
-    }
-
-    private List<ClassOrInterfaceDeclaration> _findSpringComponents(CompilationUnit cu) {
-        return cu.findAll(ClassOrInterfaceDeclaration.class).stream()
-                .filter(this::_hasSpringComponentAnnotation)
-                .collect(Collectors.toList());
-    }
-
-    private boolean _hasSpringComponentAnnotation(ClassOrInterfaceDeclaration clazz) {
-        return clazz.getAnnotations().stream()
-                .anyMatch(a -> COMPONENT_ANNOTATIONS.contains(a.getNameAsString()));
-    }
-
-    private void _checkDependencyInjection(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-
-        List<FieldDeclaration> autowiredFields = component.getFields().stream()
-                .filter(f -> f.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Autowired") || a.getNameAsString().equals("Inject")))
-                .toList();
-
-        boolean hasAutowiredConstructor = component.getConstructors().stream()
-                .anyMatch(c -> c.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Autowired") || a.getNameAsString().equals("Inject")));
-
-        if ("constructor".equals(dependencyInjectionStyle) && !autowiredFields.isEmpty()) {
-            for (FieldDeclaration field : autowiredFields) {
-                errors.add(new FormatterError(
-                        Severity.ERROR,
-                        "Field injection detected but constructor injection is required",
-                        field.getBegin().get().line,
-                        field.getBegin().get().column,
-                        "Convert to constructor injection"
-                ));
-            }
-        } else if ("field".equals(dependencyInjectionStyle) && hasAutowiredConstructor) {
-            errors.add(new FormatterError(
-                    Severity.ERROR,
-                    "Constructor injection detected but field injection is required",
-                    component.getBegin().get().line,
-                    component.getBegin().get().column,
-                    "Convert to field injection"
-            ));
-        }
-    }
-
-    private void _checkNamingConvention(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-        String className = component.getNameAsString();
-
-        if (_hasAnnotation(component, "Service") && !className.endsWith("Service") && !className.endsWith("ServiceImpl")) {
-            errors.add(new FormatterError(
-                    Severity.WARNING,
-                    "Service class name should end with 'Service' or 'ServiceImpl'",
-                    component.getBegin().get().line,
-                    component.getBegin().get().column,
-                    "Rename class to follow convention"
-            ));
-        }
-
-        if (_hasAnnotation(component, "Repository") && !className.endsWith("Repository") && !className.endsWith("RepositoryImpl")) {
-            errors.add(new FormatterError(
-                    Severity.WARNING,
-                    "Repository class name should end with 'Repository' or 'RepositoryImpl'",
-                    component.getBegin().get().line,
-                    component.getBegin().get().column,
-                    "Rename class to follow convention"
-            ));
-        }
-
-        if ((_hasAnnotation(component, "Controller") || _hasAnnotation(component, "RestController"))
-                && !className.endsWith("Controller")) {
-            errors.add(new FormatterError(
-                    Severity.WARNING,
-                    "Controller class name should end with 'Controller'",
-                    component.getBegin().get().line,
-                    component.getBegin().get().column,
-                    "Rename class to follow convention"
-            ));
-        }
-    }
-
-    private boolean _hasAnnotation(ClassOrInterfaceDeclaration clazz, String annotationName) {
-        return clazz.getAnnotations().stream()
-                .anyMatch(a -> a.getNameAsString().equals(annotationName));
-    }
-
-    private void _checkAutowiring(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-
+    List<FieldDeclaration> autowiredFields =
         component.getFields().stream()
-                .filter(f -> f.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Autowired")))
-                .filter(f -> !f.isPrivate())
-                .forEach(f -> {
-                    errors.add(new FormatterError(
-                            Severity.WARNING,
-                            "Autowired field should be private",
-                            f.getBegin().get().line,
-                            f.getBegin().get().column,
-                            "Add private modifier"
-                    ));
-                });
+            .filter(
+                f ->
+                    f.getAnnotations().stream()
+                        .anyMatch(
+                            a ->
+                                a.getNameAsString().equals("Autowired")
+                                    || a.getNameAsString().equals("Inject")))
+            .toList();
 
-        component.getFields().stream()
-                .filter(f -> f.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Autowired")))
-                .forEach(f -> {
-                    boolean hasQualifier = f.getAnnotations().stream()
-                            .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+    boolean hasAutowiredConstructor =
+        component.getConstructors().stream()
+            .anyMatch(
+                c ->
+                    c.getAnnotations().stream()
+                        .anyMatch(
+                            a ->
+                                a.getNameAsString().equals("Autowired")
+                                    || a.getNameAsString().equals("Inject")));
 
-                    if (!hasQualifier && f.getVariable(0).getTypeAsString().startsWith("List<")) {
-                        errors.add(new FormatterError(
-                                Severity.WARNING,
-                                "Collection of beans should specify @Qualifier",
-                                f.getBegin().get().line,
-                                f.getBegin().get().column,
-                                "Add @Qualifier annotation"
-                        ));
-                    }
-                });
+    if ("constructor".equals(dependencyInjectionStyle) && !autowiredFields.isEmpty()) {
+      for (FieldDeclaration field : autowiredFields) {
+        errors.add(
+            new FormatterError(
+                Severity.ERROR,
+                "Field injection detected but constructor injection is required",
+                field.getBegin().get().line,
+                field.getBegin().get().column,
+                "Convert to constructor injection"));
+      }
+    } else if ("field".equals(dependencyInjectionStyle) && hasAutowiredConstructor) {
+      errors.add(
+          new FormatterError(
+              Severity.ERROR,
+              "Constructor injection detected but field injection is required",
+              component.getBegin().get().line,
+              component.getBegin().get().column,
+              "Convert to field injection"));
+    }
+  }
+
+  private void _checkNamingConvention(
+      ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+    String className = component.getNameAsString();
+
+    if (_hasAnnotation(component, "Service")
+        && !className.endsWith("Service")
+        && !className.endsWith("ServiceImpl")) {
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "Service class name should end with 'Service' or 'ServiceImpl'",
+              component.getBegin().get().line,
+              component.getBegin().get().column,
+              "Rename class to follow convention"));
     }
 
-    private void _checkQualifierUsage(ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
-        // Look for autowired fields without qualifiers that might need them
-        component.getFields().stream()
-                .filter(f -> f.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Autowired")))
-                .forEach(f -> {
-                    boolean hasQualifier = f.getAnnotations().stream()
-                            .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
-
-                    // Fields of interface or abstract class types often need qualifiers
-                    com.github.javaparser.ast.type.Type fieldType = f.getVariable(0).getType();
-                    String typeStr = fieldType.asString();
-
-                    // Fields with common Spring interface types should have qualifiers
-                    boolean isCommonInterface = typeStr.contains("Repository") ||
-                            typeStr.contains("Service") ||
-                            typeStr.contains("Dao") ||
-                            typeStr.contains("Component");
-
-                    // Collections of Spring beans always need qualifiers
-                    boolean isCollection = typeStr.startsWith("List<") ||
-                            typeStr.startsWith("Set<") ||
-                            typeStr.startsWith("Collection<") ||
-                            typeStr.startsWith("Map<");
-
-                    if (!hasQualifier && (isCommonInterface || isCollection)) {
-                        errors.add(new FormatterError(
-                                Severity.WARNING,
-                                "Autowired field '" + f.getVariable(0).getNameAsString() +
-                                        "' might need a @Qualifier annotation",
-                                f.getBegin().get().line,
-                                f.getBegin().get().column,
-                                "Add @Qualifier to specify which bean to inject"
-                        ));
-                    }
-
-                    // Check if there are multiple fields of the same type
-                    if (!hasQualifier && !isCollection) {
-                        long fieldCount = component.getFields().stream()
-                                .filter(otherField -> !otherField.equals(f))
-                                .filter(otherField -> otherField.getVariable(0).getType().equals(fieldType))
-                                .count();
-
-                        if (fieldCount > 0) {
-                            errors.add(new FormatterError(
-                                    Severity.WARNING,
-                                    "Multiple fields of type '" + typeStr + "' found without @Qualifier",
-                                    f.getBegin().get().line,
-                                    f.getBegin().get().column,
-                                    "Add @Qualifier to disambiguate which bean to inject"
-                            ));
-                        }
-                    }
-                });
+    if (_hasAnnotation(component, "Repository")
+        && !className.endsWith("Repository")
+        && !className.endsWith("RepositoryImpl")) {
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "Repository class name should end with 'Repository' or 'RepositoryImpl'",
+              component.getBegin().get().line,
+              component.getBegin().get().column,
+              "Rename class to follow convention"));
     }
 
+    if ((_hasAnnotation(component, "Controller") || _hasAnnotation(component, "RestController"))
+        && !className.endsWith("Controller")) {
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "Controller class name should end with 'Controller'",
+              component.getBegin().get().line,
+              component.getBegin().get().column,
+              "Rename class to follow convention"));
+    }
+  }
 
-    private boolean _fixDependencyInjection(ClassOrInterfaceDeclaration component) {
-        if (!"constructor".equals(dependencyInjectionStyle)) {
-            return false;
-        }
+  private boolean _hasAnnotation(ClassOrInterfaceDeclaration clazz, String annotationName) {
+    return clazz.getAnnotations().stream()
+        .anyMatch(a -> a.getNameAsString().equals(annotationName));
+  }
 
-        List<FieldDeclaration> autowiredFields = component.getFields().stream()
-                .filter(f -> f.getAnnotations().stream()
+  private void _checkAutowiring(
+      ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+
+    component.getFields().stream()
+        .filter(
+            f -> f.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired")))
+        .filter(f -> !f.isPrivate())
+        .forEach(
+            f -> {
+              errors.add(
+                  new FormatterError(
+                      Severity.WARNING,
+                      "Autowired field should be private",
+                      f.getBegin().get().line,
+                      f.getBegin().get().column,
+                      "Add private modifier"));
+            });
+
+    component.getFields().stream()
+        .filter(
+            f -> f.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired")))
+        .forEach(
+            f -> {
+              boolean hasQualifier =
+                  f.getAnnotations().stream()
+                      .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+              if (!hasQualifier && f.getVariable(0).getTypeAsString().startsWith("List<")) {
+                errors.add(
+                    new FormatterError(
+                        Severity.WARNING,
+                        "Collection of beans should specify @Qualifier",
+                        f.getBegin().get().line,
+                        f.getBegin().get().column,
+                        "Add @Qualifier annotation"));
+              }
+            });
+  }
+
+  private void _checkQualifierUsage(
+      ClassOrInterfaceDeclaration component, List<FormatterError> errors) {
+    // Look for autowired fields without qualifiers that might need them
+    component.getFields().stream()
+        .filter(
+            f -> f.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired")))
+        .forEach(
+            f -> {
+              boolean hasQualifier =
+                  f.getAnnotations().stream()
+                      .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+              // Fields of interface or abstract class types often need qualifiers
+              com.github.javaparser.ast.type.Type fieldType = f.getVariable(0).getType();
+              String typeStr = fieldType.asString();
+
+              // Fields with common Spring interface types should have qualifiers
+              boolean isCommonInterface =
+                  typeStr.contains("Repository")
+                      || typeStr.contains("Service")
+                      || typeStr.contains("Dao")
+                      || typeStr.contains("Component");
+
+              // Collections of Spring beans always need qualifiers
+              boolean isCollection =
+                  typeStr.startsWith("List<")
+                      || typeStr.startsWith("Set<")
+                      || typeStr.startsWith("Collection<")
+                      || typeStr.startsWith("Map<");
+
+              if (!hasQualifier && (isCommonInterface || isCollection)) {
+                errors.add(
+                    new FormatterError(
+                        Severity.WARNING,
+                        "Autowired field '"
+                            + f.getVariable(0).getNameAsString()
+                            + "' might need a @Qualifier annotation",
+                        f.getBegin().get().line,
+                        f.getBegin().get().column,
+                        "Add @Qualifier to specify which bean to inject"));
+              }
+
+              // Check if there are multiple fields of the same type
+              if (!hasQualifier && !isCollection) {
+                long fieldCount =
+                    component.getFields().stream()
+                        .filter(otherField -> !otherField.equals(f))
+                        .filter(otherField -> otherField.getVariable(0).getType().equals(fieldType))
+                        .count();
+
+                if (fieldCount > 0) {
+                  errors.add(
+                      new FormatterError(
+                          Severity.WARNING,
+                          "Multiple fields of type '" + typeStr + "' found without @Qualifier",
+                          f.getBegin().get().line,
+                          f.getBegin().get().column,
+                          "Add @Qualifier to disambiguate which bean to inject"));
+                }
+              }
+            });
+  }
+
+  private boolean _fixDependencyInjection(ClassOrInterfaceDeclaration component) {
+    if (!"constructor".equals(dependencyInjectionStyle)) {
+      return false;
+    }
+
+    List<FieldDeclaration> autowiredFields =
+        component.getFields().stream()
+            .filter(
+                f ->
+                    f.getAnnotations().stream()
                         .anyMatch(a -> a.getNameAsString().equals("Autowired")))
-                .toList();
+            .toList();
 
-        if (autowiredFields.isEmpty()) {
-            return false;
-        }
+    if (autowiredFields.isEmpty()) {
+      return false;
+    }
 
-        boolean changed = false;
+    boolean changed = false;
 
-        boolean hasConstructor = !component.getConstructors().isEmpty();
+    boolean hasConstructor = !component.getConstructors().isEmpty();
 
-        if (!hasConstructor) {
-            com.github.javaparser.ast.body.ConstructorDeclaration constructor =
-                    new com.github.javaparser.ast.body.ConstructorDeclaration();
-            constructor.setName(component.getNameAsString());
-            constructor.setPublic(true);
+    if (!hasConstructor) {
+      com.github.javaparser.ast.body.ConstructorDeclaration constructor =
+          new com.github.javaparser.ast.body.ConstructorDeclaration();
+      constructor.setName(component.getNameAsString());
+      constructor.setPublic(true);
 
-            constructor.addAnnotation("Autowired");
+      constructor.addAnnotation("Autowired");
 
-            for (FieldDeclaration field : autowiredFields) {
-                com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
-                String fieldName = field.getVariable(0).getNameAsString();
+      for (FieldDeclaration field : autowiredFields) {
+        com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
+        String fieldName = field.getVariable(0).getNameAsString();
 
-                com.github.javaparser.ast.body.Parameter param =
-                        new com.github.javaparser.ast.body.Parameter(fieldType, fieldName);
+        com.github.javaparser.ast.body.Parameter param =
+            new com.github.javaparser.ast.body.Parameter(fieldType, fieldName);
 
-                field.getAnnotations().stream()
-                        .filter(a -> a.getNameAsString().equals("Qualifier"))
-                        .findFirst()
-                        .ifPresent(qualifier -> param.addAnnotation(qualifier.clone()));
+        field.getAnnotations().stream()
+            .filter(a -> a.getNameAsString().equals("Qualifier"))
+            .findFirst()
+            .ifPresent(qualifier -> param.addAnnotation(qualifier.clone()));
 
-                constructor.addParameter(param);
-            }
+        constructor.addParameter(param);
+      }
 
-            com.github.javaparser.ast.stmt.BlockStmt body = new com.github.javaparser.ast.stmt.BlockStmt();
-            for (FieldDeclaration field : autowiredFields) {
-                String fieldName = field.getVariable(0).getNameAsString();
+      com.github.javaparser.ast.stmt.BlockStmt body =
+          new com.github.javaparser.ast.stmt.BlockStmt();
+      for (FieldDeclaration field : autowiredFields) {
+        String fieldName = field.getVariable(0).getNameAsString();
 
-                String stmt = "this." + fieldName + " = " + fieldName + ";";
-                body.addStatement(stmt);
+        String stmt = "this." + fieldName + " = " + fieldName + ";";
+        body.addStatement(stmt);
 
-                field.getAnnotations().removeIf(a -> a.getNameAsString().equals("Autowired"));
-            }
+        field.getAnnotations().removeIf(a -> a.getNameAsString().equals("Autowired"));
+      }
 
-            constructor.setBody(body);
+      constructor.setBody(body);
 
-            component.addMember(constructor);
+      component.addMember(constructor);
+      changed = true;
+    } else {
+      com.github.javaparser.ast.body.ConstructorDeclaration existingConstructor =
+          component.getConstructors().get(0);
+
+      boolean isAutowired =
+          existingConstructor.getAnnotations().stream()
+              .anyMatch(a -> a.getNameAsString().equals("Autowired"));
+
+      if (!isAutowired) {
+        existingConstructor.addAnnotation("Autowired");
+        changed = true;
+      }
+
+      Set<String> paramNames =
+          existingConstructor.getParameters().stream()
+              .map(NodeWithSimpleName::getNameAsString)
+              .collect(Collectors.toSet());
+
+      List<FieldDeclaration> missingFields =
+          autowiredFields.stream()
+              .filter(f -> !paramNames.contains(f.getVariable(0).getNameAsString()))
+              .toList();
+
+      if (!missingFields.isEmpty()) {}
+
+      if (isAutowired || changed) {
+        for (FieldDeclaration field : autowiredFields) {
+          if (paramNames.contains(field.getVariable(0).getNameAsString())) {
+            field.getAnnotations().removeIf(a -> a.getNameAsString().equals("Autowired"));
             changed = true;
-        } else {
-            com.github.javaparser.ast.body.ConstructorDeclaration existingConstructor =
-                    component.getConstructors().get(0);
-
-            boolean isAutowired = existingConstructor.getAnnotations().stream()
-                    .anyMatch(a -> a.getNameAsString().equals("Autowired"));
-
-            if (!isAutowired) {
-                existingConstructor.addAnnotation("Autowired");
-                changed = true;
-            }
-
-            Set<String> paramNames = existingConstructor.getParameters().stream()
-                    .map(NodeWithSimpleName::getNameAsString)
-                    .collect(Collectors.toSet());
-
-            List<FieldDeclaration> missingFields = autowiredFields.stream()
-                    .filter(f -> !paramNames.contains(f.getVariable(0).getNameAsString()))
-                    .toList();
-
-            if (!missingFields.isEmpty()) {
-
-
-
-            }
-
-            if (isAutowired || changed) {
-                for (FieldDeclaration field : autowiredFields) {
-                    if (paramNames.contains(field.getVariable(0).getNameAsString())) {
-                        field.getAnnotations().removeIf(a -> a.getNameAsString().equals("Autowired"));
-                        changed = true;
-                    }
-                }
-            }
+          }
         }
-
-        return changed;
+      }
     }
 
-    private boolean _fixAutowiring(ClassOrInterfaceDeclaration component) {
-        boolean changed = false;
+    return changed;
+  }
 
-        for (FieldDeclaration field : component.getFields()) {
-            if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired")) && !field.isPrivate()) {
-                field.setPrivate(true);
-                changed = true;
-            }
-        }
+  private boolean _fixAutowiring(ClassOrInterfaceDeclaration component) {
+    boolean changed = false;
 
-        return changed;
+    for (FieldDeclaration field : component.getFields()) {
+      if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))
+          && !field.isPrivate()) {
+        field.setPrivate(true);
+        changed = true;
+      }
     }
 
-    private boolean _addMissingQualifiers(ClassOrInterfaceDeclaration component) {
-        boolean changed = false;
+    return changed;
+  }
 
-        // Find field types that occur multiple times
-        Map<String, List<com.github.javaparser.ast.body.FieldDeclaration>> fieldsByType = new HashMap<>();
+  private boolean _addMissingQualifiers(ClassOrInterfaceDeclaration component) {
+    boolean changed = false;
 
-        for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
-            if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
-                com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
-                String typeStr = fieldType.asString();
+    // Find field types that occur multiple times
+    Map<String, List<com.github.javaparser.ast.body.FieldDeclaration>> fieldsByType =
+        new HashMap<>();
 
-                fieldsByType.computeIfAbsent(typeStr, k -> new ArrayList<>()).add(field);
-            }
-        }
+    for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
+      if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
+        com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
+        String typeStr = fieldType.asString();
 
-        // Add qualifiers to fields with duplicate types
-        for (Map.Entry<String, List<com.github.javaparser.ast.body.FieldDeclaration>> entry : fieldsByType.entrySet()) {
-            if (entry.getValue().size() > 1) {
-                for (com.github.javaparser.ast.body.FieldDeclaration field : entry.getValue()) {
-                    boolean hasQualifier = field.getAnnotations().stream()
-                            .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
-
-                    if (!hasQualifier) {
-                        // Generate qualifier name from field name
-                        String fieldName = field.getVariable(0).getNameAsString();
-
-                        // Create a new qualifier annotation
-                        com.github.javaparser.ast.expr.StringLiteralExpr qualifierValue =
-                                new com.github.javaparser.ast.expr.StringLiteralExpr(fieldName);
-
-                        // Create the name directly with a simple name
-                        com.github.javaparser.ast.expr.Name qualifierName =
-                                new com.github.javaparser.ast.expr.Name("Qualifier");
-
-                        com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
-                                new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
-                                        qualifierName,
-                                        qualifierValue);
-
-                        field.addAnnotation(qualifierAnnotation);
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        // Also add qualifiers for collection types
-        for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
-            if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
-                com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
-                String typeStr = fieldType.asString();
-                boolean isCollection = typeStr.startsWith("List<") ||
-                        typeStr.startsWith("Set<") ||
-                        typeStr.startsWith("Collection<");
-
-                boolean hasQualifier = field.getAnnotations().stream()
-                        .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
-
-                if (isCollection && !hasQualifier) {
-                    // Extract the element type from the collection
-                    String elementType = typeStr.substring(typeStr.indexOf('<') + 1, typeStr.lastIndexOf('>'));
-
-                    // Create a qualifier based on a pluralized element type
-                    String qualifierValue = elementType.toLowerCase() + "s";
-
-                    // Create a new qualifier annotation
-                    com.github.javaparser.ast.expr.StringLiteralExpr qualifierStringExpr =
-                            new com.github.javaparser.ast.expr.StringLiteralExpr(qualifierValue);
-
-                    // Create the name directly with a simple name
-                    com.github.javaparser.ast.expr.Name qualifierName =
-                            new com.github.javaparser.ast.expr.Name("Qualifier");
-
-                    com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
-                            new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
-                                    qualifierName,
-                                    qualifierStringExpr);
-
-                    field.addAnnotation(qualifierAnnotation);
-                    changed = true;
-                }
-            }
-        }
-
-        return changed;
+        fieldsByType.computeIfAbsent(typeStr, k -> new ArrayList<>()).add(field);
+      }
     }
+
+    // Add qualifiers to fields with duplicate types
+    for (Map.Entry<String, List<com.github.javaparser.ast.body.FieldDeclaration>> entry :
+        fieldsByType.entrySet()) {
+      if (entry.getValue().size() > 1) {
+        for (com.github.javaparser.ast.body.FieldDeclaration field : entry.getValue()) {
+          boolean hasQualifier =
+              field.getAnnotations().stream()
+                  .anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+          if (!hasQualifier) {
+            // Generate qualifier name from field name
+            String fieldName = field.getVariable(0).getNameAsString();
+
+            // Create a new qualifier annotation
+            com.github.javaparser.ast.expr.StringLiteralExpr qualifierValue =
+                new com.github.javaparser.ast.expr.StringLiteralExpr(fieldName);
+
+            // Create the name directly with a simple name
+            com.github.javaparser.ast.expr.Name qualifierName =
+                new com.github.javaparser.ast.expr.Name("Qualifier");
+
+            com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
+                new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
+                    qualifierName, qualifierValue);
+
+            field.addAnnotation(qualifierAnnotation);
+            changed = true;
+          }
+        }
+      }
+    }
+
+    // Also add qualifiers for collection types
+    for (com.github.javaparser.ast.body.FieldDeclaration field : component.getFields()) {
+      if (field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Autowired"))) {
+        com.github.javaparser.ast.type.Type fieldType = field.getVariable(0).getType();
+        String typeStr = fieldType.asString();
+        boolean isCollection =
+            typeStr.startsWith("List<")
+                || typeStr.startsWith("Set<")
+                || typeStr.startsWith("Collection<");
+
+        boolean hasQualifier =
+            field.getAnnotations().stream().anyMatch(a -> a.getNameAsString().equals("Qualifier"));
+
+        if (isCollection && !hasQualifier) {
+          // Extract the element type from the collection
+          String elementType =
+              typeStr.substring(typeStr.indexOf('<') + 1, typeStr.lastIndexOf('>'));
+
+          // Create a qualifier based on a pluralized element type
+          String qualifierValue = elementType.toLowerCase() + "s";
+
+          // Create a new qualifier annotation
+          com.github.javaparser.ast.expr.StringLiteralExpr qualifierStringExpr =
+              new com.github.javaparser.ast.expr.StringLiteralExpr(qualifierValue);
+
+          // Create the name directly with a simple name
+          com.github.javaparser.ast.expr.Name qualifierName =
+              new com.github.javaparser.ast.expr.Name("Qualifier");
+
+          com.github.javaparser.ast.expr.SingleMemberAnnotationExpr qualifierAnnotation =
+              new com.github.javaparser.ast.expr.SingleMemberAnnotationExpr(
+                  qualifierName, qualifierStringExpr);
+
+          field.addAnnotation(qualifierAnnotation);
+          changed = true;
+        }
+      }
+    }
+
+    return changed;
+  }
 }
