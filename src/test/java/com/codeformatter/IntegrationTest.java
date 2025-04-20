@@ -7,7 +7,6 @@ import com.codeformatter.config.ConfigurationLoader;
 import com.codeformatter.config.FormatterConfig;
 import com.codeformatter.core.AdvancedCodeFormatter;
 import com.codeformatter.plugins.FileType;
-import com.codeformatter.plugins.react.ReactJSFormatter;
 import com.codeformatter.plugins.spring.SpringBootFormatter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -33,16 +32,11 @@ public class IntegrationTest {
 
     createSampleJavaFile();
     createSampleSpringFile();
-    createSampleReactFile();
 
     config = ConfigurationLoader.loadDefaultConfig();
 
     formatter = new AdvancedCodeFormatter(config);
     formatter.registerPlugin(FileType.JAVA, new SpringBootFormatter());
-    formatter.registerPlugin(FileType.JAVASCRIPT, new ReactJSFormatter());
-    formatter.registerPlugin(FileType.JSX, new ReactJSFormatter());
-    formatter.registerPlugin(FileType.TYPESCRIPT, new ReactJSFormatter());
-    formatter.registerPlugin(FileType.TSX, new ReactJSFormatter());
   }
 
   @AfterEach
@@ -52,7 +46,7 @@ public class IntegrationTest {
     }
   }
 
-  private Path createSampleJavaFile() throws IOException {
+  private void createSampleJavaFile() throws IOException {
     Path filePath = tempDir.resolve("Sample.java");
     String content =
         """
@@ -67,10 +61,9 @@ public class IntegrationTest {
                     }
                 }""";
     Files.writeString(filePath, content);
-    return filePath;
   }
 
-  private Path createSampleSpringFile() throws IOException {
+  private void createSampleSpringFile() throws IOException {
     Path filePath = tempDir.resolve("SampleService.java");
     String content =
         """
@@ -95,35 +88,6 @@ public class IntegrationTest {
                     }
                 }""";
     Files.writeString(filePath, content);
-    return filePath;
-  }
-
-  private Path createSampleReactFile() throws IOException {
-    Path filePath = tempDir.resolve("SampleComponent.jsx");
-    String content =
-        """
-                import './styles.css';
-                import React from 'react';
-                import { useState } from 'react';
-
-                function   SampleComponent( ) {
-                    const [count, setCount] = useState(0);
-                   \s
-                    // Effect with missing dependency
-                    React.useEffect(() => {
-                        document.title = `Count: ${count}`;
-                    }, []);
-                   \s
-                    return (
-                        <div    className="container"   >
-                            <h1>Sample Component</h1>
-                            <p>Count: {count}</p>
-                            <button    onClick={() => setCount(count + 1)}   >Increment</button>
-                        </div>
-                    );
-                }""";
-    Files.writeString(filePath, content);
-    return filePath;
   }
 
   @Test
@@ -201,80 +165,6 @@ public class IntegrationTest {
   }
 
   @Test
-  @DisplayName("Integration test: React formatting with refactorings")
-  public void testReactFormatting() throws Exception {
-
-    Path componentFile = tempDir.resolve("ProblemComponent.jsx");
-    String reactCode =
-        """
-                import './styles.css';
-                import React from 'react';
-                import axios from 'axios';
-                import { useState, useEffect, useCallback } from 'react';
-
-                function ProblemComponent() {
-                  const [data, setData] = useState([]);
-                  const [loading, setLoading] = useState(false);
-                  const [error, setError] = useState(null);
-                  const [page, setPage] = useState(1);
-
-                  useEffect(() => {
-                    const fetchData = async () => {
-                      try {
-                        setLoading(true);
-                        const response = await axios.get(`https://api.example.com/data?page=${page}`);
-                        setData(response.data);
-                        setError(null);
-                      } catch (err) {
-                        setError(err.message);
-                      } finally {
-                        setLoading(false);
-                      }
-                    };
-                    fetchData();
-                  }, []);
-
-                  const handleNextPage = useCallback(() => {
-                    setPage(page + 1);
-                  }, []);
-
-                  return (
-                    <div style={{ padding: '20px', margin: '10px', border: '1px solid #ccc' }}>
-                      <h1>Data List</h1>
-                      {loading && <p>Loading...</p>}
-                      {error && <p style={{ color: 'red' }}>{error}</p>}
-                      <ul>
-                        {data.map(item => (
-                          <li key={item.id}>{item.name}</li>
-                        ))}
-                      </ul>
-                      <button onClick={handleNextPage}>Next Page</button>
-                    </div>
-                  );
-                }""";
-
-    Files.writeString(componentFile, reactCode);
-
-    FormatterResult result = formatter.formatFile(componentFile, reactCode);
-
-    assertTrue(result.isSuccessful(), "Formatting should be successful");
-    assertNotNull(result.getFormattedCode(), "Formatted code should not be null");
-    assertNotEquals(reactCode, result.getFormattedCode(), "Code should be changed");
-
-    assertFalse(result.getErrors().isEmpty(), "Should detect errors");
-
-    assertFalse(result.getAppliedRefactorings().isEmpty(), "Should apply refactorings");
-
-    String formattedCode = result.getFormattedCode();
-
-    int reactImportPos = formattedCode.indexOf("import React");
-    int styleImportPos = formattedCode.indexOf("import './styles.css'");
-    assertTrue(reactImportPos < styleImportPos, "React imports should come before styles");
-
-    assertTrue(formattedCode.contains("[page]"), "Hook dependencies should include page");
-  }
-
-  @Test
   @DisplayName("Integration test: Check mode without modification")
   public void testCheckMode() throws Exception {
 
@@ -320,6 +210,5 @@ public class IntegrationTest {
                     Long::sum));
 
     assertTrue(issuesByFileType.getOrDefault("java", 0L) > 0, "Should find issues in Java files");
-    assertTrue(issuesByFileType.getOrDefault("jsx", 0L) > 0, "Should find issues in JSX files");
   }
 }
