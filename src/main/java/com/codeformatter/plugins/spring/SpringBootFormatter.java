@@ -94,7 +94,9 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
       errors.addAll(analyzerResult.getErrors());
 
       if (analyzer.canAutoFix()) {
+
         RefactoringResult refactoringResult = analyzer.applyRefactoring(cu);
+
         appliedRefactorings.addAll(refactoringResult.getAppliedRefactorings());
         errors.addAll(refactoringResult.getErrors());
       }

@@ -7,7 +7,6 @@ import com.codeformatter.api.error.FormatterError;
 import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
 import com.codeformatter.util.LoggerUtil;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -27,7 +26,6 @@ import java.util.stream.Collectors;
  */
 public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(ReactJSFormatter.class);
-  private static final ObjectMapper objectMapper = new ObjectMapper();
 
   private FormatterConfig config;
   private NodeJsServer server;
@@ -38,7 +36,6 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     this.config = config;
     this.server = new NodeJsServer();
 
-    // Configure the formatter from Java config
     Map<String, Object> formatterOptions = createFormatterOptions(config);
     try {
       server.configure(formatterOptions);
@@ -52,16 +49,13 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   private Map<String, Object> createFormatterOptions(FormatterConfig config) {
     Map<String, Object> options = new HashMap<>();
 
-    // Convert general config to formatter options
     options.put("printWidth", config.getGeneralConfig("lineLength", 100));
     options.put("tabWidth", config.getGeneralConfig("indentSize", 2));
     options.put("useTabs", config.getGeneralConfig("useTabs", false));
 
-    // React specific options
     options.put("jsxBracketSameLine", false);
     options.put("singleQuote", true);
 
-    // React plugin configuration
     Map<String, Object> reactConfig = new HashMap<>();
     if (config.getPluginConfigsMap().containsKey("react")) {
       reactConfig.putAll(config.getPluginConfigsMap().get("react"));
@@ -78,15 +72,12 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
 
   @Override
   public FormatterResult format(Path filePath, String sourceCode) {
-    // Early return for empty files
     if (sourceCode == null || sourceCode.trim().isEmpty()) {
       return FormatterResult.builder().successful(true).formattedCode(sourceCode).build();
     }
 
-    // Calculate content hash for caching
     String contentHash = calculateHash(sourceCode);
 
-    // Check cache first
     if (resultCache.containsKey(contentHash)) {
       logger.fine("Cache hit for " + filePath);
       return resultCache.get(contentHash);
@@ -214,17 +205,12 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     return lintIssues.stream()
         .map(
             issue -> {
-              Severity severity;
-              switch (issue.getSeverity()) {
-                case "error":
-                  severity = Severity.ERROR;
-                  break;
-                case "warning":
-                  severity = Severity.WARNING;
-                  break;
-                default:
-                  severity = Severity.INFO;
-              }
+              Severity severity =
+                  switch (issue.getSeverity()) {
+                    case "error" -> Severity.ERROR;
+                    case "warning" -> Severity.WARNING;
+                    default -> Severity.INFO;
+                  };
 
               String suggestion = null;
               if (issue.getRuleId() != null && !issue.getRuleId().isEmpty()) {

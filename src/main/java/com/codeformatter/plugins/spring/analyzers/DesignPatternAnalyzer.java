@@ -48,7 +48,7 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
         _checkSingleResponsibilityPrinciple(clazz, errors);
         _checkFactoryPattern(clazz, errors);
         _checkBuilderPattern(clazz, errors);
-        checkStrategyPattern(clazz, errors);
+        _checkStrategyPattern(clazz, errors);
       }
     } catch (Exception e) {
       logger.log(Level.WARNING, "Error during design pattern analysis", e);
@@ -66,7 +66,6 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
 
   @Override
   public boolean canAutoFix() {
-
     return false;
   }
 
@@ -197,7 +196,7 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
   }
 
   /** Check for Strategy Pattern opportunities via switch statements */
-  private void checkStrategyPattern(
+  private void _checkStrategyPattern(
       ClassOrInterfaceDeclaration clazz, List<FormatterError> errors) {
     for (MethodDeclaration method : clazz.getMethods()) {
       if (method.getBody().isPresent()) {
@@ -207,7 +206,9 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
           errors.add(
               new FormatterError(
                   Severity.INFO,
-                  "Method '" + method.getNameAsString() + "' has multiple switch statements",
+                  "Method '"
+                      + method.getNameAsString()
+                      + "' has multiple switch statements that should use the Strategy Pattern",
                   method.getBegin().get().line,
                   method.getBegin().get().column,
                   "Consider using the Strategy Pattern to improve extensibility"));
@@ -223,13 +224,14 @@ public class DesignPatternAnalyzer implements CodeAnalyzer {
                         + method.getNameAsString()
                         + "' has a switch statement with "
                         + caseCount
-                        + " cases",
+                        + " cases that should use the Strategy Pattern",
                     switchStmt.getBegin().get().line,
                     switchStmt.getBegin().get().column,
                     "Consider using the Strategy Pattern to improve extensibility"));
           }
         }
 
+        // Check this section for proper implementation
         int ifStatementCount =
             method.getBody().get().findAll(com.github.javaparser.ast.stmt.IfStmt.class).size();
         if (ifStatementCount >= 3) {

@@ -48,9 +48,11 @@ public class ReactFormatterIntegrationTest {
     // Initialize the main formatter
     formatter = new AdvancedCodeFormatter(config);
 
-    // Register our React formatter
-    formatter.registerPlugin(FileType.JAVASCRIPT, ReactFormatterFactory.createFormatter(config));
-    formatter.registerPlugin(FileType.JSX, ReactFormatterFactory.createFormatter(config));
+    ReactJSFormatter reactFormatter = new ReactJSFormatter();
+    reactFormatter.initialize(config);
+
+    formatter.registerPlugin(FileType.JAVASCRIPT, reactFormatter);
+    formatter.registerPlugin(FileType.JSX, reactFormatter);
   }
 
   @AfterEach

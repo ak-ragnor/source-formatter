@@ -580,11 +580,16 @@ public class FormatterCli {
     AdvancedCodeFormatter formatter = new AdvancedCodeFormatter(config);
 
     try {
+      // Use direct instantiation for all formatters
+      ReactJSFormatter reactFormatter = new ReactJSFormatter();
+      reactFormatter.initialize(config);
+
       formatter.registerPlugin(FileType.JAVA, new SpringBootFormatter());
-      formatter.registerPlugin(FileType.JAVASCRIPT, new ReactJSFormatter());
-      formatter.registerPlugin(FileType.JSX, new ReactJSFormatter());
-      formatter.registerPlugin(FileType.TYPESCRIPT, new ReactJSFormatter());
-      formatter.registerPlugin(FileType.TSX, new ReactJSFormatter());
+      formatter.registerPlugin(FileType.JAVASCRIPT, reactFormatter);
+      formatter.registerPlugin(FileType.JSX, reactFormatter);
+      formatter.registerPlugin(FileType.TYPESCRIPT, reactFormatter);
+      formatter.registerPlugin(FileType.TSX, reactFormatter);
+
       _printInfo("Initialized formatter with Spring Boot and React JS plugins");
     } catch (Exception e) {
       _printWarning(
