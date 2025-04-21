@@ -7,6 +7,7 @@ import com.codeformatter.api.error.FormatterError;
 import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
 import com.codeformatter.plugins.FileType;
+import com.codeformatter.plugins.react.ReactJSFormatter;
 import com.codeformatter.util.LoggerUtil;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,9 @@ import java.util.stream.Collectors;
 /**
  * Thread-safe implementation of the Advanced Source Code Formatter. This class orchestrates the
  * formatting process, delegating to appropriate language-specific plugins based on file type.
+ *
+ * <p>This improved version adds better error handling and graceful fallbacks for unavailable
+ * plugins.
  */
 public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(AdvancedCodeFormatter.class);
@@ -43,14 +47,41 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
     logger.info("Advanced Code Formatter initialized with configuration");
   }
 
-  /** Registers a plugin for a specific file type. */
+  /**
+   * Registers a plugin for a specific file type with improved error handling. If the plugin is a
+   * ReactJSFormatter that's disabled, it will still be registered but will operate in a limited
+   * capacity.
+   */
   public void registerPlugin(FileType fileType, FormatterPlugin plugin) {
+    // Special handling for ReactJSFormatter
+    if (plugin instanceof ReactJSFormatter) {
+      ReactJSFormatter reactFormatter = (ReactJSFormatter) plugin;
+
+      // Initialize the plugin
+      plugin.initialize(config);
+
+      // Even if it's disabled, we still register it so it can provide informative errors
+      plugins.put(fileType, plugin);
+
+      if (reactFormatter.isDisabled()) {
+        logger.warning(
+            "Registered disabled ReactJSFormatter for "
+                + fileType.getDescription()
+                + ": "
+                + reactFormatter.getDisabledReason());
+      } else {
+        logger.info("Registered plugin for file type: " + fileType.getDescription());
+      }
+      return;
+    }
+
+    // Standard plugin registration
     plugins.put(fileType, plugin);
     plugin.initialize(config);
     logger.info("Registered plugin for file type: " + fileType.getDescription());
   }
 
-  /** Formats a single file using the appropriate plugin. */
+  /** Formats a single file using the appropriate plugin with enhanced error handling. */
   @Override
   public FormatterResult formatFile(Path filePath, String sourceCode) {
     FileType fileType = FileType.detect(filePath);
@@ -63,7 +94,13 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
           .formattedCode(sourceCode)
           .addError(
               new FormatterError(
-                  Severity.ERROR, "No plugin registered for file type: " + fileType, 1, 1))
+                  Severity.ERROR,
+                  "No plugin registered for file type: " + fileType,
+                  1,
+                  1,
+                  "Register a plugin for "
+                      + fileType.getDescription()
+                      + " or use a supported file type"))
           .build();
     }
 
@@ -75,14 +112,20 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
         successCount.incrementAndGet();
         logger.fine("Successfully formatted: " + filePath);
       } else {
-        errorCount.incrementAndGet();
-        logger.warning(
-            "Failed to format: "
-                + filePath
-                + " - "
-                + result.getErrors().stream()
-                    .map(e -> e.getSeverity() + ": " + e.getMessage())
-                    .collect(Collectors.joining(", ")));
+        // Check if this is a React formatter that's disabled
+        if (plugin instanceof ReactJSFormatter && ((ReactJSFormatter) plugin).isDisabled()) {
+          // This is expected - log at fine level and don't count as error
+          logger.fine("Skipped formatting (disabled plugin): " + filePath);
+        } else {
+          errorCount.incrementAndGet();
+          logger.warning(
+              "Failed to format: "
+                  + filePath
+                  + " - "
+                  + result.getErrors().stream()
+                      .map(e -> e.getSeverity() + ": " + e.getMessage())
+                      .collect(Collectors.joining(", ")));
+        }
       }
 
       return result;
@@ -90,10 +133,25 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
       errorCount.incrementAndGet();
       logger.log(Level.SEVERE, "Unexpected error formatting file: " + filePath, e);
 
+      // Create a more informative error message
+      String errorMessage = "Unexpected error: " + e.getMessage();
+      String suggestion = null;
+
+      // Provide helpful suggestions based on exception type
+      if (e.getMessage() != null) {
+        if (e.getMessage().contains("Node.js")) {
+          suggestion = "Make sure Node.js is installed and in your PATH";
+        } else if (e.getMessage().contains("OutOfMemoryError")) {
+          suggestion = "The file may be too large to process with current memory settings";
+        } else {
+          suggestion = "Check file permissions and ensure the file exists";
+        }
+      }
+
       return FormatterResult.builder()
           .successful(false)
           .formattedCode(sourceCode)
-          .addError(new FormatterError(Severity.FATAL, "Unexpected error: " + e.getMessage(), 1, 1))
+          .addError(new FormatterError(Severity.FATAL, errorMessage, 1, 1, suggestion))
           .build();
     }
   }
@@ -101,6 +159,8 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
   /**
    * Formats a directory of files using a thread pool. This implementation is thread-safe and
    * handles parallelism properly.
+   *
+   * <p>Enhanced to continue processing remaining files even when one formatter fails.
    */
   @Override
   public Map<Path, FormatterResult> formatDirectory(Path directory) {
@@ -146,6 +206,37 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
                 try {
                   String content = Files.readString(file, StandardCharsets.UTF_8);
                   FormatterResult result = formatFile(file, content);
+
+                  // Write back formatted content if formatting was successful and content changed
+                  if (result.isSuccessful() && !content.equals(result.getFormattedCode())) {
+                    try {
+                      Files.writeString(file, result.getFormattedCode());
+                      logger.fine("Updated content of: " + file);
+                    } catch (IOException e) {
+                      logger.log(
+                          Level.WARNING, "Failed to write back formatted content: " + file, e);
+
+                      // Add error about write failure to the result
+                      FormatterResult updatedResult =
+                          FormatterResult.builder()
+                              .successful(false)
+                              .formattedCode(result.getFormattedCode())
+                              .errors(result.getErrors())
+                              .addError(
+                                  new FormatterError(
+                                      Severity.ERROR,
+                                      "Failed to write formatted content: " + e.getMessage(),
+                                      1,
+                                      1,
+                                      "Check file permissions and disk space"))
+                              .appliedRefactorings(result.getAppliedRefactorings())
+                              .build();
+
+                      results.put(file, updatedResult);
+                      return;
+                    }
+                  }
+
                   results.put(file, result);
                 } catch (IOException e) {
                   results.put(
@@ -155,7 +246,11 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
                           .formattedCode(null)
                           .addError(
                               new FormatterError(
-                                  Severity.FATAL, "Failed to read file: " + e.getMessage(), 1, 1))
+                                  Severity.FATAL,
+                                  "Failed to read file: " + e.getMessage(),
+                                  1,
+                                  1,
+                                  "Check file permissions and ensure the file exists"))
                           .build());
                 } catch (Exception e) {
                   results.put(
@@ -165,7 +260,11 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
                           .formattedCode(null)
                           .addError(
                               new FormatterError(
-                                  Severity.FATAL, "Unexpected error: " + e.getMessage(), 1, 1))
+                                  Severity.FATAL,
+                                  "Unexpected error: " + e.getMessage(),
+                                  1,
+                                  1,
+                                  "Please report this error to the development team"))
                           .build());
                 }
               });
@@ -186,6 +285,19 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
       }
 
       logger.info("Processed " + results.size() + " files");
+
+      // Categorize results
+      long successful = results.values().stream().filter(FormatterResult::isSuccessful).count();
+      long unchanged =
+          results.values().stream()
+              .filter(r -> r.isSuccessful() && r.getAppliedRefactorings().isEmpty())
+              .count();
+      long withErrors = results.values().stream().filter(r -> !r.isSuccessful()).count();
+
+      logger.info(
+          String.format(
+              "Results: %d successful (%d unchanged), %d with errors",
+              successful, unchanged, withErrors));
 
       return results;
     } catch (IOException e) {
@@ -212,6 +324,20 @@ public class AdvancedCodeFormatter implements CodeFormatter, AutoCloseable {
   /** Checks if a plugin is registered for the given file type. */
   public boolean hasPluginFor(FileType fileType) {
     return plugins.containsKey(fileType);
+  }
+
+  /** Checks if an active (non-disabled) plugin is available for the given file type. */
+  public boolean hasActivePluginFor(FileType fileType) {
+    if (!plugins.containsKey(fileType)) {
+      return false;
+    }
+
+    FormatterPlugin plugin = plugins.get(fileType);
+    if (plugin instanceof ReactJSFormatter) {
+      return !((ReactJSFormatter) plugin).isDisabled();
+    }
+
+    return true;
   }
 
   /** Gets the number of registered plugins. */

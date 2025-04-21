@@ -11,7 +11,8 @@ import com.codeformatter.plugins.react.ReactJSFormatter;
 import com.codeformatter.plugins.spring.SpringBootFormatter;
 import com.codeformatter.util.ErrorFormatter;
 import com.codeformatter.util.LoggerUtil;
-import java.io.IOException;
+import java.io.*;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -62,6 +63,15 @@ public class FormatterCli {
         case "analyze":
           _analyzeFiles(args);
           break;
+        case "setup":
+          _setupEnvironment(args);
+          break;
+        case "check-env":
+          _checkEnvironment(args);
+          break;
+        case "help-setup":
+          _printSetupGuide();
+          break;
         case "--version":
         case "-v":
           _printVersion();
@@ -90,6 +100,705 @@ public class FormatterCli {
     }
   }
 
+  /** New command to check if the environment is properly set up */
+  private static void _checkEnvironment(String[] args) {
+    _printHeader("ENVIRONMENT CHECK");
+    _printInfo("Checking environment for Advanced Code Formatter...");
+
+    // Check Java version
+    String javaVersion = System.getProperty("java.version");
+    _printBullet("Java version: " + javaVersion);
+    if (javaVersion.startsWith("1.") || Integer.parseInt(javaVersion.split("\\.")[0]) < 11) {
+      _printWarning("  ⚠ Java 11 or higher is recommended for best performance");
+    } else {
+      _printSuccess("  ✓ Java version is sufficient");
+    }
+
+    // Check Node.js for React/JavaScript formatting
+    boolean nodeAvailable = false;
+    String nodeVersion = null;
+
+    try {
+      Process process = new ProcessBuilder("node", "--version").start();
+      int exitCode = process.waitFor();
+      if (exitCode == 0) {
+        try (Scanner scanner = new Scanner(process.getInputStream()).useDelimiter("\\A")) {
+          nodeVersion = scanner.hasNext() ? scanner.next().trim() : "Unknown";
+          nodeAvailable = true;
+          _printBullet("Node.js: " + nodeVersion);
+          _printSuccess("  ✓ Node.js is installed");
+        }
+      } else {
+        _printBullet("Node.js: Not found");
+        _printWarning("  ⚠ Node.js check failed with exit code: " + exitCode);
+      }
+    } catch (IOException | InterruptedException e) {
+      _printBullet("Node.js: Not found");
+      _printWarning("  ⚠ Node.js not found: " + e.getMessage());
+    }
+
+    if (!nodeAvailable) {
+      _printWarning("  ⚠ Node.js is required for JavaScript and React formatting");
+      _printInfo("  ℹ To install Node.js, visit: https://nodejs.org/");
+    } else {
+      // Check for required npm packages
+      _printInfo("\nChecking required npm packages:");
+      String[] requiredPackages = {
+        "prettier", "eslint", "eslint-plugin-react", "eslint-plugin-react-hooks"
+      };
+      boolean allPackagesFound = true;
+      for (String pkg : requiredPackages) {
+        boolean pkgFound = false;
+
+        // First check global installation
+        try {
+          Process process = new ProcessBuilder("npm", "list", "-g", pkg).start();
+          int exitCode = process.waitFor();
+          pkgFound = (exitCode == 0);
+        } catch (IOException | InterruptedException e) {
+          // Ignore errors here, will try local next
+        }
+
+        // Then check local installation in the current directory
+        if (!pkgFound) {
+          try {
+            Process process = new ProcessBuilder("npm", "list", pkg).start();
+            int exitCode = process.waitFor();
+            pkgFound = (exitCode == 0);
+          } catch (IOException | InterruptedException e) {
+            // Ignore errors here
+          }
+        }
+
+        // Check user home .codeformatter/node directory
+        if (!pkgFound) {
+          Path userHomeNode = Paths.get(System.getProperty("user.home"), ".codeformatter", "node");
+          if (Files.exists(userHomeNode)) {
+            try {
+              Process process =
+                  new ProcessBuilder("npm", "list", pkg).directory(userHomeNode.toFile()).start();
+              int exitCode = process.waitFor();
+              pkgFound = (exitCode == 0);
+            } catch (IOException | InterruptedException e) {
+              // Ignore errors here
+            }
+          }
+        }
+
+        if (pkgFound) {
+          _printBullet(pkg);
+          _printSuccess("  ✓ Installed");
+        } else {
+          _printBullet(pkg);
+          _printWarning("  ⚠ Not found");
+          allPackagesFound = false;
+        }
+      }
+
+      if (!allPackagesFound) {
+        _printInfo("\nSome required npm packages are missing. Run this command to install them:");
+        _printInfo(
+            "  npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks");
+        _printInfo("Or run the setup command:");
+        _printInfo("  codeformatter setup");
+      }
+    }
+
+    // Check config file
+    Path configPath = Paths.get(CONFIG_FILE_NAME);
+    _printInfo("\nChecking configuration file:");
+    _printBullet("Config file: " + CONFIG_FILE_NAME);
+    if (Files.exists(configPath)) {
+      _printSuccess("  ✓ Found");
+    } else {
+      _printWarning("  ⚠ Not found");
+      _printInfo("  ℹ Run 'codeformatter init' to create a default configuration file");
+    }
+
+    // Check system resources
+    _printInfo("\nChecking system resources:");
+    Runtime runtime = Runtime.getRuntime();
+    long maxMemory = runtime.maxMemory() / (1024 * 1024);
+    _printBullet("Maximum available memory: " + maxMemory + " MB");
+
+    if (maxMemory < 512) {
+      _printWarning("  ⚠ Available memory is low. Consider increasing with -Xmx option.");
+    } else {
+      _printSuccess("  ✓ Memory is sufficient");
+    }
+
+    int cpus = runtime.availableProcessors();
+    _printBullet("Available processors: " + cpus);
+    _printSuccess("  ✓ Using up to " + cpus + " threads for parallel processing");
+
+    // Check for write permissions in current directory
+    _printInfo("\nChecking filesystem permissions:");
+    try {
+      Path testFile = Files.createTempFile("codeformatter-test", ".tmp");
+      Files.delete(testFile);
+      _printBullet("Write permissions");
+      _printSuccess("  ✓ Write permission check passed");
+    } catch (IOException e) {
+      _printBullet("Write permissions");
+      _printWarning("  ⚠ Write permission check failed: " + e.getMessage());
+      _printInfo("  ℹ The formatter needs write permissions to modify files");
+    }
+
+    // Check Node.js resources
+    _printInfo("\nChecking Node.js server resources:");
+    Path nodePath = _findNodeServerScript();
+    if (nodePath != null) {
+      _printBullet("Node.js server script");
+      _printSuccess("  ✓ Found at: " + nodePath);
+    } else {
+      _printBullet("Node.js server script");
+      _printWarning("  ⚠ Not found in expected locations");
+      _printInfo("  ℹ Run 'codeformatter setup' to set up Node.js resources");
+    }
+
+    // Summary and next steps
+    _printHeader("SUMMARY");
+
+    if (nodeAvailable && Files.exists(configPath) && nodePath != null) {
+      _printSuccess("✓ Basic environment is correctly set up!");
+    } else {
+      _printWarning("⚠ Some components are missing from your environment.");
+      _printInfo("\nTo complete setup, run:");
+      _printInfo("  codeformatter setup");
+      _printInfo("\nFor detailed setup instructions, run:");
+      _printInfo("  codeformatter help-setup");
+    }
+  }
+
+  /** Find the Node.js server script in various locations */
+  private static Path _findNodeServerScript() {
+    List<Path> possibleLocations = new ArrayList<>();
+
+    // Current working directory and subdirectories
+    possibleLocations.add(Paths.get("node", "server.js"));
+
+    // User's home directory
+    String userHome = System.getProperty("user.home");
+    possibleLocations.add(Paths.get(userHome, ".codeformatter", "node", "server.js"));
+
+    // Installation directory (relative to current working directory)
+    possibleLocations.add(Paths.get("node", "server.js"));
+
+    // Application directory structure locations
+    possibleLocations.add(
+        Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
+    possibleLocations.add(
+        Paths.get(
+            System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
+    possibleLocations.add(
+        Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
+
+    // Check each location
+    for (Path path : possibleLocations) {
+      if (Files.exists(path)) {
+        return path;
+      }
+    }
+
+    // Check if resource exists in classpath
+    try {
+      URL serverJsResource = FormatterCli.class.getClassLoader().getResource("node/server.js");
+      if (serverJsResource != null) {
+        return Paths.get(serverJsResource.toURI());
+      }
+    } catch (Exception e) {
+      // Ignore, will return null
+    }
+
+    return null;
+  }
+
+  /** New command to help users set up their environment */
+  private static void _setupEnvironment(String[] args) throws IOException {
+    _printHeader("ADVANCED CODE FORMATTER SETUP");
+    _printInfo("Setting up your environment for the Advanced Code Formatter...");
+
+    // Create user-specific configuration directory
+    String userHome = System.getProperty("user.home");
+    Path configDir = Paths.get(userHome, ".codeformatter");
+    Path nodeDir = configDir.resolve("node");
+
+    if (!Files.exists(configDir)) {
+      Files.createDirectories(configDir);
+      _printSuccess("Created configuration directory: " + configDir);
+    }
+
+    if (!Files.exists(nodeDir)) {
+      Files.createDirectories(nodeDir);
+      _printSuccess("Created Node.js resources directory: " + nodeDir);
+    }
+
+    // Extract Node.js server scripts to user directory
+    boolean extracted = _extractNodeResources(nodeDir);
+
+    if (extracted) {
+      _printSuccess("Extracted Node.js server scripts to: " + nodeDir);
+    } else {
+      _printWarning("Failed to extract Node.js server scripts");
+      _printInfo("This is not critical if you have Node.js installed with required packages.");
+    }
+
+    // Create default configuration file if needed
+    Path configFile = Paths.get(CONFIG_FILE_NAME);
+    if (!Files.exists(configFile)) {
+      _initializeConfig(new String[] {"init"});
+    } else {
+      _printInfo("Configuration file already exists: " + CONFIG_FILE_NAME);
+    }
+
+    // Check Node.js installation
+    boolean nodeAvailable = false;
+    try {
+      Process process = new ProcessBuilder("node", "--version").start();
+      int exitCode = process.waitFor();
+      if (exitCode == 0) {
+        nodeAvailable = true;
+        try (BufferedReader reader =
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+          String version = reader.readLine();
+          _printSuccess("Node.js is installed: " + version);
+        }
+      }
+    } catch (IOException | InterruptedException e) {
+      _printWarning("Node.js not detected: " + e.getMessage());
+    }
+
+    if (!nodeAvailable) {
+      _printInfo("\nTo enable JavaScript and React formatting, please install Node.js:");
+      _printInfo("1. Visit https://nodejs.org/");
+      _printInfo("2. Download and install the LTS version");
+      _printInfo("3. Restart your terminal/command prompt after installation");
+      _printInfo("\nAfter installing Node.js, install required npm packages:");
+      _printInfo("npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks");
+    } else {
+      _printInfo("\nNow installing required npm packages...");
+
+      try {
+        // Install required npm packages locally in the .codeformatter/node directory
+        Process process =
+            new ProcessBuilder(
+                    "npm",
+                    "install",
+                    "prettier",
+                    "eslint",
+                    "eslint-plugin-react",
+                    "eslint-plugin-react-hooks")
+                .directory(nodeDir.toFile())
+                .inheritIO()
+                .start();
+
+        int exitCode = process.waitFor();
+        if (exitCode == 0) {
+          _printSuccess("Successfully installed npm packages");
+        } else {
+          _printWarning("npm package installation failed with exit code: " + exitCode);
+          _printInfo("You may need to install them manually:");
+          _printInfo(
+              "npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks");
+        }
+      } catch (IOException | InterruptedException e) {
+        _printWarning("Failed to install npm packages: " + e.getMessage());
+        _printInfo("Please install them manually:");
+        _printInfo("npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks");
+      }
+    }
+
+    _printHeader("SETUP COMPLETE");
+    _printSuccess("Advanced Code Formatter has been set up successfully!");
+    _printInfo("\nTo verify your environment, run:");
+    _printInfo("  codeformatter check-env");
+    _printInfo("\nTo get started with formatting, try:");
+    _printInfo("  codeformatter format <path-to-your-code>");
+    _printInfo("\nFor more help and information, run:");
+    _printInfo("  codeformatter help-setup");
+  }
+
+  /** Display detailed setup guide */
+  private static void _printSetupGuide() {
+    _printHeader("ADVANCED CODE FORMATTER SETUP GUIDE");
+    _printInfo("This guide will help you set up the Advanced Code Formatter environment.\n");
+
+    _printHeader("STEP 1: Java Environment");
+    _printInfo(
+        "The formatter requires Java 11 or higher. Current version: "
+            + System.getProperty("java.version"));
+    _printInfo("If you need to upgrade Java:");
+    _printBullet(
+        "1. Visit https://adoptium.net/ or https://www.oracle.com/java/technologies/downloads/");
+    _printBullet("2. Download and install Java 11 or higher");
+    _printBullet("3. Ensure JAVA_HOME is set to the new Java installation");
+    _printBullet("4. Restart your terminal or command prompt");
+
+    _printHeader("STEP 2: Node.js Setup (for JavaScript/React formatting)");
+    _printInfo("To format JavaScript and React files, Node.js is required:");
+    _printBullet("1. Visit https://nodejs.org/");
+    _printBullet("2. Download and install the LTS version");
+    _printBullet("3. Verify installation with: node --version");
+    _printBullet("4. Install required npm packages:");
+    _printInfo("   npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks");
+    _printInfo("\nAlternatively, run the setup command to handle this for you:");
+    _printInfo("  codeformatter setup");
+
+    _printHeader("STEP 3: Configuration");
+    _printInfo("Create a default configuration file in your project directory:");
+    _printInfo("  codeformatter init");
+    _printInfo("\nThis creates .codeformatter.yml with default settings you can customize.");
+    _printInfo("Common configuration options include:");
+    _printBullet("- indentSize: Number of spaces for indentation (default: 4)");
+    _printBullet("- lineLength: Maximum line length (default: 100)");
+    _printBullet("- useTabs: Use tabs instead of spaces (default: false)");
+    _printBullet("- Plugin-specific settings for Spring and React");
+
+    _printHeader("STEP 4: Verify Setup");
+    _printInfo("Check your environment to ensure everything is configured correctly:");
+    _printInfo("  codeformatter check-env");
+    _printInfo("\nThis will verify Java, Node.js, npm packages, and configuration.");
+
+    _printHeader("STEP 5: Using the Formatter");
+    _printInfo("Format your code with:");
+    _printInfo("  codeformatter format <path>");
+    _printInfo("\nOther useful commands:");
+    _printBullet("codeformatter check <path>   - Check formatting without modifying files");
+    _printBullet("codeformatter analyze <path> - Analyze code quality without formatting");
+
+    _printHeader("TROUBLESHOOTING");
+    _printInfo("Common issues and solutions:");
+
+    _printBullet("Issue: 'NodeJS formatter is disabled'");
+    _printInfo("  Solution: Run 'codeformatter setup' to install Node.js and required packages");
+
+    _printBullet("Issue: 'Error processing with Node.js'");
+    _printInfo("  Solution: Check if Node.js is installed with 'node --version' and install any");
+    _printInfo("            missing npm packages with 'npm install -g prettier eslint'");
+
+    _printBullet("Issue: 'File not found' or permission errors");
+    _printInfo(
+        "  Solution: Check file paths and ensure you have appropriate read/write permissions");
+
+    _printBullet("Issue: 'OutOfMemoryError'");
+    _printInfo("  Solution: Increase Java heap size with '-Xmx' flag. Example:");
+    _printInfo("            java -Xmx1g -jar advanced-formatter.jar format <path>");
+
+    _printHeader("ADDITIONAL HELP");
+    _printInfo("For more information and help:");
+    _printBullet("- Command help: codeformatter --help");
+    _printBullet("- Environment check: codeformatter check-env");
+    _printBullet("- Setup assistance: codeformatter setup");
+  }
+
+  /** Extract Node.js resources to the specified directory */
+  private static boolean _extractNodeResources(Path nodeDir) {
+    try {
+      // Extract server.js
+      InputStream serverJs =
+          FormatterCli.class.getClassLoader().getResourceAsStream("node/server.js");
+      if (serverJs != null) {
+        try (OutputStream out = new FileOutputStream(nodeDir.resolve("server.js").toFile())) {
+          byte[] buffer = new byte[4096];
+          int read;
+          while ((read = serverJs.read(buffer)) != -1) {
+            out.write(buffer, 0, read);
+          }
+        }
+
+        // Create package.json if not extracted from resources
+        InputStream packageJsonStream =
+            FormatterCli.class.getClassLoader().getResourceAsStream("package.json");
+        if (packageJsonStream != null) {
+          try (OutputStream out = new FileOutputStream(nodeDir.resolve("package.json").toFile())) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = packageJsonStream.read(buffer)) != -1) {
+              out.write(buffer, 0, read);
+            }
+          }
+        } else {
+          // Create package.json manually
+          Path packageJson = nodeDir.resolve("package.json");
+          String packageJsonContent =
+              "{\n"
+                  + "  \"name\": \"advanced-formatter-js-tools\",\n"
+                  + "  \"version\": \"1.0.0\",\n"
+                  + "  \"private\": true,\n"
+                  + "  \"dependencies\": {\n"
+                  + "    \"express\": \"^4.18.2\",\n"
+                  + "    \"prettier\": \"^2.8.8\",\n"
+                  + "    \"eslint\": \"^8.46.0\",\n"
+                  + "    \"eslint-plugin-react\": \"^7.33.0\",\n"
+                  + "    \"eslint-plugin-react-hooks\": \"^4.6.0\"\n"
+                  + "  }\n"
+                  + "}";
+          Files.writeString(packageJson, packageJsonContent);
+        }
+
+        // Create .eslintrc.js if not extracted from resources
+        InputStream eslintRcStream =
+            FormatterCli.class.getClassLoader().getResourceAsStream(".eslintrc.js");
+        if (eslintRcStream != null) {
+          try (OutputStream out = new FileOutputStream(nodeDir.resolve(".eslintrc.js").toFile())) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = eslintRcStream.read(buffer)) != -1) {
+              out.write(buffer, 0, read);
+            }
+          }
+        } else {
+          // Create .eslintrc.js manually
+          Path eslintRc = nodeDir.resolve(".eslintrc.js");
+          String eslintRcContent =
+              "module.exports = {\n"
+                  + "  env: {\n"
+                  + "    browser: true,\n"
+                  + "    es2021: true,\n"
+                  + "    node: true,\n"
+                  + "  },\n"
+                  + "  extends: [\n"
+                  + "    'eslint:recommended',\n"
+                  + "    'plugin:react/recommended',\n"
+                  + "    'plugin:react-hooks/recommended',\n"
+                  + "  ],\n"
+                  + "  parserOptions: {\n"
+                  + "    ecmaFeatures: {\n"
+                  + "      jsx: true,\n"
+                  + "    },\n"
+                  + "    ecmaVersion: 'latest',\n"
+                  + "    sourceType: 'module',\n"
+                  + "  },\n"
+                  + "  plugins: ['react', 'react-hooks'],\n"
+                  + "  rules: {\n"
+                  + "    'react-hooks/rules-of-hooks': 'error',\n"
+                  + "    'react-hooks/exhaustive-deps': 'warn',\n"
+                  + "  },\n"
+                  + "  settings: {\n"
+                  + "    react: {\n"
+                  + "      version: 'detect',\n"
+                  + "    },\n"
+                  + "  },\n"
+                  + "};\n";
+          Files.writeString(eslintRc, eslintRcContent);
+        }
+
+        // Create a server.js file if it wasn't found in resources
+        Path serverJsPath = nodeDir.resolve("server.js");
+        if (!Files.exists(serverJsPath) || Files.size(serverJsPath) == 0) {
+          String serverJsContent =
+              "const express = require('express');\n"
+                  + "const prettier = require('prettier');\n"
+                  + "const { ESLint } = require('eslint');\n"
+                  + "\n"
+                  + "// Get port from command line or use default\n"
+                  + "const port = process.argv[2] || 9567;\n"
+                  + "const app = express();\n"
+                  + "\n"
+                  + "// For parsing application/json\n"
+                  + "app.use(express.json({ limit: '50mb' }));\n"
+                  + "\n"
+                  + "// For health check and startup verification\n"
+                  + "app.get('/health', (req, res) => {\n"
+                  + "  res.json({ status: 'ok', version: '1.0.0' });\n"
+                  + "});\n"
+                  + "\n"
+                  + "// Global configuration storage\n"
+                  + "let globalConfig = {\n"
+                  + "  prettier: {\n"
+                  + "    printWidth: 80,\n"
+                  + "    tabWidth: 2,\n"
+                  + "    useTabs: false,\n"
+                  + "    semi: true,\n"
+                  + "    singleQuote: true,\n"
+                  + "    trailingComma: 'es5',\n"
+                  + "    bracketSpacing: true,\n"
+                  + "    jsxBracketSameLine: false,\n"
+                  + "    arrowParens: 'avoid',\n"
+                  + "  },\n"
+                  + "  eslint: {\n"
+                  + "    rules: {},\n"
+                  + "  },\n"
+                  + "};\n"
+                  + "\n"
+                  + "// Configuration endpoint\n"
+                  + "app.post('/configure', (req, res) => {\n"
+                  + "  try {\n"
+                  + "    const config = req.body;\n"
+                  + "\n"
+                  + "    // Update global configuration\n"
+                  + "    if (config.prettier) {\n"
+                  + "      globalConfig.prettier = { ...globalConfig.prettier, ...config.prettier };\n"
+                  + "    }\n"
+                  + "\n"
+                  + "    if (config.eslint) {\n"
+                  + "      globalConfig.eslint = {\n"
+                  + "        ...globalConfig.eslint,\n"
+                  + "        rules: {\n"
+                  + "          ...(globalConfig.eslint.rules || {}),\n"
+                  + "          ...(config.eslint.rules || {}),\n"
+                  + "        },\n"
+                  + "      };\n"
+                  + "    }\n"
+                  + "\n"
+                  + "    console.log('Configuration updated');\n"
+                  + "\n"
+                  + "    res.json({ success: true, message: 'Configuration updated' });\n"
+                  + "  } catch (error) {\n"
+                  + "    console.error('Error updating configuration:', error);\n"
+                  + "    res.status(500).json({\n"
+                  + "      success: false,\n"
+                  + "      error: error.message,\n"
+                  + "    });\n"
+                  + "  }\n"
+                  + "});\n"
+                  + "\n"
+                  + "// Format code endpoint\n"
+                  + "app.post('/format', async (req, res) => {\n"
+                  + "  try {\n"
+                  + "    const { code, isReact, options } = req.body;\n"
+                  + "\n"
+                  + "    if (!code) {\n"
+                  + "      return res.status(400).json({\n"
+                  + "        success: false,\n"
+                  + "        error: 'No code provided',\n"
+                  + "      });\n"
+                  + "    }\n"
+                  + "\n"
+                  + "    // Merge global configuration with request-specific options\n"
+                  + "    const prettierOptions = {\n"
+                  + "      // Start with global config\n"
+                  + "      ...globalConfig.prettier,\n"
+                  + "      // Set parser based on file type\n"
+                  + "      parser: isReact ? 'babel' : 'babel',\n"
+                  + "      // Override with request-specific options if provided\n"
+                  + "      ...(options || {}),\n"
+                  + "    };\n"
+                  + "\n"
+                  + "    // Try to format with prettier\n"
+                  + "    let formattedCode;\n"
+                  + "    try {\n"
+                  + "      formattedCode = prettier.format(code, prettierOptions);\n"
+                  + "    } catch (prettierError) {\n"
+                  + "      console.warn('Prettier formatting failed:', prettierError.message);\n"
+                  + "      // Return original code if prettier fails\n"
+                  + "      formattedCode = code;\n"
+                  + "    }\n"
+                  + "\n"
+                  + "    res.json({\n"
+                  + "      success: true,\n"
+                  + "      formattedCode,\n"
+                  + "    });\n"
+                  + "  } catch (error) {\n"
+                  + "    console.error('Formatting error:', error);\n"
+                  + "    res.status(500).json({\n"
+                  + "      success: false,\n"
+                  + "      error: error.message,\n"
+                  + "      originalCode: req.body.code,\n"
+                  + "    });\n"
+                  + "  }\n"
+                  + "});\n"
+                  + "\n"
+                  + "// Analyze code endpoint\n"
+                  + "app.post('/analyze', async (req, res) => {\n"
+                  + "  try {\n"
+                  + "    const { code, isReact } = req.body;\n"
+                  + "\n"
+                  + "    if (!code) {\n"
+                  + "      return res.status(400).json({\n"
+                  + "        success: false,\n"
+                  + "        error: 'No code provided',\n"
+                  + "      });\n"
+                  + "    }\n"
+                  + "\n"
+                  + "    // Initialize ESLint with our custom config\n"
+                  + "    const eslint = new ESLint({\n"
+                  + "      useEslintrc: true,\n"
+                  + "      overrideConfig: {\n"
+                  + "        rules: globalConfig.eslint.rules || {},\n"
+                  + "      },\n"
+                  + "    });\n"
+                  + "\n"
+                  + "    // Run ESLint\n"
+                  + "    const results = await eslint.lintText(code, {\n"
+                  + "      filePath: isReact ? 'file.jsx' : 'file.js',\n"
+                  + "    });\n"
+                  + "\n"
+                  + "    // Format results\n"
+                  + "    const issues = results[0].messages.map(msg => ({\n"
+                  + "      ruleId: msg.ruleId || 'syntax-error',\n"
+                  + "      severity: msg.severity === 2 ? 'error' : 'warning',\n"
+                  + "      message: msg.message,\n"
+                  + "      line: msg.line || 1,\n"
+                  + "      column: msg.column || 1,\n"
+                  + "    }));\n"
+                  + "\n"
+                  + "    res.json({\n"
+                  + "      success: true,\n"
+                  + "      issues,\n"
+                  + "    });\n"
+                  + "  } catch (error) {\n"
+                  + "    console.error('Analysis error:', error);\n"
+                  + "    res.status(500).json({\n"
+                  + "      success: false,\n"
+                  + "      error: error.message,\n"
+                  + "    });\n"
+                  + "  }\n"
+                  + "});\n"
+                  + "\n"
+                  + "// Start server\n"
+                  + "const server = app.listen(port, () => {\n"
+                  + "  console.log(`Server listening on port ${port}`);\n"
+                  + "});\n"
+                  + "\n"
+                  + "// Handle graceful shutdown\n"
+                  + "process.on('SIGTERM', () => {\n"
+                  + "  console.log('Received SIGTERM, shutting down');\n"
+                  + "  server.close(() => {\n"
+                  + "    console.log('Server stopped');\n"
+                  + "    process.exit(0);\n"
+                  + "  });\n"
+                  + "});\n"
+                  + "\n"
+                  + "process.on('SIGINT', () => {\n"
+                  + "  console.log('Received SIGINT, shutting down');\n"
+                  + "  server.close(() => {\n"
+                  + "    console.log('Server stopped');\n"
+                  + "    process.exit(0);\n"
+                  + "  });\n"
+                  + "});\n";
+
+          Files.writeString(serverJsPath, serverJsContent);
+        }
+
+        // Create README.txt with instructions
+        Path readmePath = nodeDir.resolve("README.txt");
+        String readmeContent =
+            "Advanced Code Formatter Node.js Server\n\n"
+                + "This directory contains the Node.js server component required for JavaScript and React formatting.\n"
+                + "If you're experiencing issues, please ensure you have Node.js installed and that the following\n"
+                + "packages are installed globally or in this directory:\n\n"
+                + "- prettier\n"
+                + "- eslint\n"
+                + "- eslint-plugin-react\n"
+                + "- eslint-plugin-react-hooks\n\n"
+                + "You can install these packages by running:\n"
+                + "npm install\n\n"
+                + "or\n\n"
+                + "npm install -g prettier eslint eslint-plugin-react eslint-plugin-react-hooks\n";
+
+        Files.writeString(readmePath, readmeContent);
+        return true;
+      } else {
+        logger.warning("Could not find node/server.js in resources");
+        return false;
+      }
+    } catch (IOException e) {
+      logger.log(Level.WARNING, "Failed to extract Node.js resources", e);
+      return false;
+    }
+  }
+
   private static void _printVersion() {
     System.out.println("Advanced Code Formatter version " + VERSION);
   }
@@ -103,6 +812,9 @@ public class FormatterCli {
     System.out.println("  codeformatter format <path>       - Format files in path");
     System.out.println("  codeformatter check <path>        - Check files without formatting");
     System.out.println("  codeformatter analyze <path>      - Analyze code without formatting");
+    System.out.println("  codeformatter setup               - Set up environment for formatting");
+    System.out.println("  codeformatter check-env           - Check environment setup");
+    System.out.println("  codeformatter help-setup          - Display detailed setup guide");
     System.out.println("  codeformatter --help|-h           - Show this help");
     System.out.println("  codeformatter --version|-v        - Show version information");
     System.out.println();
@@ -116,6 +828,7 @@ public class FormatterCli {
     System.out.println(
         "  --threads=<num>                   - Number of threads to use (default: available processors)");
     System.out.println("  --force                           - Force overwrite (with init command)");
+    System.out.println("  --skip-react                      - Skip ReactJS/JavaScript formatting");
   }
 
   private static void _formatFiles(String[] args) throws IOException {
@@ -135,6 +848,7 @@ public class FormatterCli {
 
     boolean verbose = _hasOption(args, "--verbose");
     boolean ciMode = _hasOption(args, "--ci");
+    boolean skipReact = _hasOption(args, "--skip-react");
     String configFile = _getOptionValue(args, "--config");
     String includePattern = _getOptionValue(args, "--include");
     String threadsStr = _getOptionValue(args, "--threads");
@@ -155,7 +869,7 @@ public class FormatterCli {
       config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
     }
 
-    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose)) {
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, skipReact)) {
       AtomicInteger fileCount = new AtomicInteger(0);
       AtomicInteger errorCount = new AtomicInteger(0);
       AtomicInteger skippedCount = new AtomicInteger(0);
@@ -180,13 +894,31 @@ public class FormatterCli {
             _printInfo("Processing: " + file);
           }
 
+          // Check if we should skip this file based on file type
+          FileType fileType = FileType.detect(file);
+          if (skipReact
+              && (fileType == FileType.JAVASCRIPT
+                  || fileType == FileType.JSX
+                  || fileType == FileType.TYPESCRIPT
+                  || fileType == FileType.TSX)) {
+            _printInfo("Skipping JavaScript/React file (--skip-react): " + file);
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
+          // Check if we have an active plugin for this file type
+          if (!formatter.hasActivePluginFor(fileType)) {
+            _printWarning("Skipping file (no active plugin): " + file);
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
           String source = Files.readString(file);
           totalLines.addAndGet(source.split("\n").length);
 
           FormatterResult result = formatter.formatFile(file, source);
 
           if (result.isSuccessful()) {
-
             if (!source.equals(result.getFormattedCode())) {
               Files.writeString(file, result.getFormattedCode());
 
@@ -206,12 +938,20 @@ public class FormatterCli {
               successCount.incrementAndGet();
             }
           } else {
-            _printError("Failed to format: " + file);
+            // Check if this is just a warning about React formatter being disabled
+            boolean isReactDisabledWarning =
+                result.getErrors().stream()
+                    .anyMatch(e -> e.getMessage().contains("ReactJS formatter is disabled"));
 
-            errorsByFile.put(file, result.getErrors());
-
-            result.getErrors().forEach(e -> _printError("  " + errorFormatter.formatError(e)));
-            errorCount.incrementAndGet();
+            if (isReactDisabledWarning) {
+              _printWarning("Skipping (ReactJS formatter disabled): " + file);
+              skippedCount.incrementAndGet();
+            } else {
+              _printError("Failed to format: " + file);
+              errorsByFile.put(file, result.getErrors());
+              result.getErrors().forEach(e -> _printError("  " + errorFormatter.formatError(e)));
+              errorCount.incrementAndGet();
+            }
           }
 
           fileCount.incrementAndGet();
@@ -280,6 +1020,7 @@ public class FormatterCli {
     // Parse optional arguments
     boolean verbose = _hasOption(args, "--verbose");
     boolean ciMode = _hasOption(args, "--ci");
+    boolean skipReact = _hasOption(args, "--skip-react");
     String configFile = _getOptionValue(args, "--config");
     String includePattern = _getOptionValue(args, "--include");
 
@@ -292,7 +1033,7 @@ public class FormatterCli {
     }
 
     // Create formatter
-    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose)) {
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, skipReact)) {
       AtomicInteger fileCount = new AtomicInteger(0);
       AtomicInteger errorCount = new AtomicInteger(0);
       AtomicInteger skippedCount = new AtomicInteger(0);
@@ -313,12 +1054,49 @@ public class FormatterCli {
 
       for (Path file : filesToCheck) {
         try {
+          // Check if we should skip this file based on file type
+          FileType fileType = FileType.detect(file);
+          if (skipReact
+              && (fileType == FileType.JAVASCRIPT
+                  || fileType == FileType.JSX
+                  || fileType == FileType.TYPESCRIPT
+                  || fileType == FileType.TSX)) {
+            if (verbose) {
+              _printInfo("Skipping JavaScript/React file (--skip-react): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
+          // Check if we have an active plugin for this file type
+          if (!formatter.hasActivePluginFor(fileType)) {
+            if (verbose) {
+              _printWarning("Skipping file (no active plugin): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
           if (verbose) {
             _printInfo("Checking: " + file);
           }
 
           String source = Files.readString(file);
           FormatterResult result = formatter.formatFile(file, source);
+
+          // Check if this is just a warning about React formatter being disabled
+          boolean isReactDisabledWarning =
+              !result.isSuccessful()
+                  && result.getErrors().stream()
+                      .anyMatch(e -> e.getMessage().contains("ReactJS formatter is disabled"));
+
+          if (isReactDisabledWarning) {
+            if (verbose) {
+              _printWarning("Skipping (ReactJS formatter disabled): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
 
           if (!result.isSuccessful() || !result.getFormattedCode().equals(source)) {
             _printWarning("File needs formatting: " + file);
@@ -393,7 +1171,6 @@ public class FormatterCli {
     }
   }
 
-  /** New command that only analyzes code without formatting it */
   private static void _analyzeFiles(String[] args) throws IOException {
     if (args.length < 2) {
       _printError("Error: Missing path argument");
@@ -412,6 +1189,7 @@ public class FormatterCli {
     // Parse optional arguments
     boolean verbose = _hasOption(args, "--verbose");
     boolean ciMode = _hasOption(args, "--ci");
+    boolean skipReact = _hasOption(args, "--skip-react");
     String configFile = _getOptionValue(args, "--config");
     String includePattern = _getOptionValue(args, "--include");
 
@@ -424,9 +1202,10 @@ public class FormatterCli {
     }
 
     // Create formatter
-    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose)) {
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, skipReact)) {
       AtomicInteger fileCount = new AtomicInteger(0);
       AtomicInteger errorCount = new AtomicInteger(0);
+      AtomicInteger skippedCount = new AtomicInteger(0);
       AtomicInteger issueCount = new AtomicInteger(0);
 
       List<Path> filesToCheck =
@@ -443,12 +1222,49 @@ public class FormatterCli {
 
       for (Path file : filesToCheck) {
         try {
+          // Check if we should skip this file based on file type
+          FileType fileType = FileType.detect(file);
+          if (skipReact
+              && (fileType == FileType.JAVASCRIPT
+                  || fileType == FileType.JSX
+                  || fileType == FileType.TYPESCRIPT
+                  || fileType == FileType.TSX)) {
+            if (verbose) {
+              _printInfo("Skipping JavaScript/React file (--skip-react): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
+          // Check if we have an active plugin for this file type
+          if (!formatter.hasActivePluginFor(fileType)) {
+            if (verbose) {
+              _printWarning("Skipping file (no active plugin): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
           if (verbose) {
             _printInfo("Analyzing: " + file);
           }
 
           String source = Files.readString(file);
           FormatterResult result = formatter.formatFile(file, source);
+
+          // Check if this is just a warning about React formatter being disabled
+          boolean isReactDisabledWarning =
+              !result.isSuccessful()
+                  && result.getErrors().stream()
+                      .anyMatch(e -> e.getMessage().contains("ReactJS formatter is disabled"));
+
+          if (isReactDisabledWarning) {
+            if (verbose) {
+              _printWarning("Skipping (ReactJS formatter disabled): " + file);
+            }
+            skippedCount.incrementAndGet();
+            continue;
+          }
 
           if (!result.getErrors().isEmpty()) {
             errorsByFile.put(file, result.getErrors());
@@ -534,6 +1350,9 @@ public class FormatterCli {
       System.out.println("  Files with warnings: " + filesWithWarnings);
       System.out.println("  Files with suggestions: " + filesWithInfo);
       System.out.println("  Files with processing failures: " + errorCount.get());
+      if (skippedCount.get() > 0) {
+        System.out.println("  Skipped files: " + skippedCount.get());
+      }
 
       if (!errorsByFile.isEmpty() && !ciMode) {
         System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
@@ -576,21 +1395,37 @@ public class FormatterCli {
     _printSuccess("Created configuration file: " + CONFIG_FILE_NAME);
   }
 
-  private static AdvancedCodeFormatter _createFormatter(FormatterConfig config, boolean verbose) {
+  private static AdvancedCodeFormatter _createFormatter(
+      FormatterConfig config, boolean verbose, boolean skipReact) {
     AdvancedCodeFormatter formatter = new AdvancedCodeFormatter(config);
 
     try {
-      // Use direct instantiation for all formatters
-      ReactJSFormatter reactFormatter = new ReactJSFormatter();
-      reactFormatter.initialize(config);
-
+      // Register the Spring Boot formatter for Java files
       formatter.registerPlugin(FileType.JAVA, new SpringBootFormatter());
-      formatter.registerPlugin(FileType.JAVASCRIPT, reactFormatter);
-      formatter.registerPlugin(FileType.JSX, reactFormatter);
-      formatter.registerPlugin(FileType.TYPESCRIPT, reactFormatter);
-      formatter.registerPlugin(FileType.TSX, reactFormatter);
 
-      _printInfo("Initialized formatter with Spring Boot and React JS plugins");
+      // Only register React formatter if not skipped
+      if (!skipReact) {
+        // Create and initialize React formatter
+        ReactJSFormatter reactFormatter = new ReactJSFormatter();
+
+        // Register for all JS/TS file types regardless of availability
+        // The ReactJSFormatter itself will handle disabled operation gracefully
+        formatter.registerPlugin(FileType.JAVASCRIPT, reactFormatter);
+        formatter.registerPlugin(FileType.JSX, reactFormatter);
+        formatter.registerPlugin(FileType.TYPESCRIPT, reactFormatter);
+        formatter.registerPlugin(FileType.TSX, reactFormatter);
+
+        if (reactFormatter.isDisabled()) {
+          _printWarning(
+              "JavaScript/React formatting disabled: " + reactFormatter.getDisabledReason());
+          _printInfo(
+              "Run 'codeformatter setup' to set up the environment for JavaScript/React formatting");
+        } else {
+          _printInfo("Initialized formatter with Spring Boot and React JS plugins");
+        }
+      } else {
+        _printInfo("Initialized formatter with Spring Boot plugin only (React formatting skipped)");
+      }
     } catch (Exception e) {
       _printWarning(
           "Warning: Failed to initialize one or more formatter plugins: " + e.getMessage());
@@ -724,6 +1559,15 @@ public class FormatterCli {
       seconds = seconds % 60;
       return String.format("%d min %d sec", minutes, seconds);
     }
+  }
+
+  private static void _printHeader(String header) {
+    System.out.println();
+    System.out.println(errorFormatter.colorize(ErrorFormatter.ANSI_BOLD, "=== " + header + " ==="));
+  }
+
+  private static void _printBullet(String message) {
+    System.out.println("• " + message);
   }
 
   private static void _printSuccess(String message) {

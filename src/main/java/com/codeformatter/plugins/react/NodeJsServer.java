@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.BufferedReader;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -27,6 +29,8 @@ import java.util.logging.Logger;
 /**
  * Manages a local Node.js server for JavaScript/React code processing. The server starts when
  * needed and shuts down when the formatter is closed.
+ *
+ * <p>This implementation includes improved resource handling to ensure reliable operation.
  */
 public class NodeJsServer implements AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(NodeJsServer.class);
@@ -37,17 +41,60 @@ public class NodeJsServer implements AutoCloseable {
 
   private Process serverProcess;
   private boolean serverRunning = false;
+  private boolean nodeJsAvailable = false;
+  private String lastError = null;
+
+  /**
+   * Check if Node.js is available in the system. This performs a basic check to see if the 'node'
+   * command exists.
+   */
+  public boolean isNodeJsAvailable() {
+    if (nodeJsAvailable) {
+      return true;
+    }
+
+    try {
+      Process process = new ProcessBuilder("node", "--version").start();
+      int exitCode = process.waitFor();
+      if (exitCode == 0) {
+        try (BufferedReader reader =
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+          String version = reader.readLine();
+          logger.info("Node.js detected: " + version);
+          nodeJsAvailable = true;
+          return true;
+        }
+      } else {
+        logger.warning("Node.js check failed with exit code: " + exitCode);
+        lastError = "Node.js not found in system PATH";
+        return false;
+      }
+    } catch (IOException | InterruptedException e) {
+      logger.warning("Node.js not available: " + e.getMessage());
+      lastError = "Node.js not available: " + e.getMessage();
+      return false;
+    }
+  }
 
   /** Start the Node.js server. */
-  public void startServer() throws IOException {
+  public boolean startServer() throws IOException {
     if (serverRunning && serverProcess != null && serverProcess.isAlive()) {
-      return;
+      return true;
+    }
+
+    // Check if Node.js is available first
+    if (!isNodeJsAvailable()) {
+      return false;
     }
 
     logger.info("Starting Node.js server...");
 
     // Find path to the server script
     Path serverScript = findServerScript();
+    if (serverScript == null) {
+      lastError = "Could not find server.js script";
+      return false;
+    }
 
     List<String> command = new ArrayList<>();
     command.add("node");
@@ -57,7 +104,13 @@ public class NodeJsServer implements AutoCloseable {
     ProcessBuilder pb = new ProcessBuilder(command);
     pb.redirectErrorStream(true);
 
-    serverProcess = pb.start();
+    try {
+      serverProcess = pb.start();
+    } catch (IOException e) {
+      logger.log(Level.WARNING, "Failed to start Node.js server: " + e.getMessage(), e);
+      lastError = "Failed to start Node.js server: " + e.getMessage();
+      return false;
+    }
 
     // Start a thread to consume and log the process output
     new Thread(
@@ -91,44 +144,52 @@ public class NodeJsServer implements AutoCloseable {
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        throw new IOException("Interrupted while waiting for server to start");
+        logger.log(Level.WARNING, "Interrupted while waiting for server to start", e);
+        lastError = "Interrupted while waiting for server to start";
+        stopServer();
+        return false;
       }
     }
 
     if (!serverRunning) {
       stopServer();
-      throw new IOException("Failed to start Node.js server within timeout");
+      lastError = "Failed to start Node.js server within timeout";
+      return false;
     }
 
     logger.info("Node.js server started successfully");
+    return true;
   }
 
   /** Find the location of the server.js script */
-  private Path findServerScript() throws IOException {
+  private Path findServerScript() {
+    logger.fine("Looking for server.js script...");
+
     // Try multiple locations to find the server script
     List<Path> possibleLocations = new ArrayList<>();
 
-    // Current working directory
+    // Current working directory and subdirectories
     possibleLocations.add(Paths.get("node", "server.js"));
 
-    // Resources directory
+    // User's home directory
+    String userHome = System.getProperty("user.home");
+    Path userHomeNode = Paths.get(userHome, ".codeformatter", "node", "server.js");
+    possibleLocations.add(userHomeNode);
+
+    // Installation directory (relative to current working directory)
+    possibleLocations.add(Paths.get("node", "server.js"));
+
+    // Application directory structure locations
     possibleLocations.add(
         Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
-
-    // Build directory
     possibleLocations.add(
         Paths.get(
             System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
+    possibleLocations.add(
+        Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
 
-    // Class path resource
-    URL resource = NodeJsServer.class.getClassLoader().getResource("node/server.js");
-    if (resource != null) {
-      try {
-        possibleLocations.add(Paths.get(resource.toURI()));
-      } catch (URISyntaxException e) {
-        logger.log(Level.WARNING, "Invalid URI for server script", e);
-      }
-    }
+    // Log attempted locations
+    logger.fine("Searching for server.js in locations: " + possibleLocations);
 
     // Check each location
     for (Path path : possibleLocations) {
@@ -138,8 +199,63 @@ public class NodeJsServer implements AutoCloseable {
       }
     }
 
-    // If we reach here, we couldn't find the script
-    throw new IOException("Could not find server.js script. Searched in: " + possibleLocations);
+    // Extract from classpath if not found in the filesystem
+    try {
+      // Check if resource exists in classpath
+      URL serverJsResource = getClass().getClassLoader().getResource("node/server.js");
+      if (serverJsResource != null) {
+        logger.info("Found server.js in classpath at: " + serverJsResource);
+
+        // Create temp directory for extraction
+        Path tempDir = Files.createTempDirectory("codeformatter-node");
+        tempDir.toFile().deleteOnExit();
+
+        Path nodeDir = tempDir.resolve("node");
+        Files.createDirectories(nodeDir);
+
+        // Extract to temp directory
+        Path tempServerJs = nodeDir.resolve("server.js");
+        try (InputStream in = serverJsResource.openStream();
+            OutputStream out = new FileOutputStream(tempServerJs.toFile())) {
+          byte[] buffer = new byte[8192];
+          int bytesRead;
+          while ((bytesRead = in.read(buffer)) != -1) {
+            out.write(buffer, 0, bytesRead);
+          }
+        }
+
+        logger.info("Extracted server.js to temporary location: " + tempServerJs);
+        return tempServerJs;
+      }
+
+      // If not found in resources, try to extract to the user's home directory
+      if (!Files.exists(userHomeNode)) {
+        // Create node directory in user home if it doesn't exist
+        Files.createDirectories(userHomeNode.getParent());
+
+        // Try to find the resource
+        InputStream serverJsStream =
+            getClass().getClassLoader().getResource("node/server.js").openStream();
+        if (serverJsStream != null) {
+          // Copy to user home
+          try (OutputStream out = new FileOutputStream(userHomeNode.toFile())) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = serverJsStream.read(buffer)) != -1) {
+              out.write(buffer, 0, bytesRead);
+            }
+          }
+          logger.info("Extracted server.js to user home: " + userHomeNode);
+          return userHomeNode;
+        }
+      }
+
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error extracting server.js from resources", e);
+    }
+
+    logger.warning("Could not find server.js script in any location");
+    return null;
   }
 
   /** Check if the server is healthy by pinging the /health endpoint */
@@ -161,7 +277,10 @@ public class NodeJsServer implements AutoCloseable {
   /** Format JavaScript/React code using the server. */
   public String formatCode(String sourceCode, boolean isReact) throws IOException {
     if (!serverRunning) {
-      startServer();
+      boolean started = startServer();
+      if (!started) {
+        throw new IOException("Node.js server not available: " + lastError);
+      }
     }
 
     try {
@@ -214,7 +333,10 @@ public class NodeJsServer implements AutoCloseable {
   /** Analyze JavaScript/React code using the server. */
   public List<LintIssue> analyzeCode(String sourceCode, boolean isReact) throws IOException {
     if (!serverRunning) {
-      startServer();
+      boolean started = startServer();
+      if (!started) {
+        throw new IOException("Node.js server not available: " + lastError);
+      }
     }
 
     try {
@@ -299,13 +421,17 @@ public class NodeJsServer implements AutoCloseable {
   }
 
   /** Configure the formatter with specific options. */
-  public void configure(Map<String, Object> options) {
+  public boolean configure(Map<String, Object> options) {
     if (!serverRunning) {
       try {
-        startServer();
+        boolean started = startServer();
+        if (!started) {
+          logger.warning("Cannot configure Node.js server - not running: " + lastError);
+          return false;
+        }
       } catch (IOException e) {
         logger.log(Level.WARNING, "Failed to start server for configuration: " + e.getMessage(), e);
-        return;
+        return false;
       }
     }
 
@@ -330,12 +456,14 @@ public class NodeJsServer implements AutoCloseable {
       int responseCode = conn.getResponseCode();
       if (responseCode != 200) {
         logger.warning("Server returned error code " + responseCode + " during configuration");
-        return;
+        return false;
       }
 
       logger.fine("Node.js server configured successfully");
+      return true;
     } catch (Exception e) {
       logger.log(Level.WARNING, "Error configuring Node.js server: " + e.getMessage(), e);
+      return false;
     }
   }
 
@@ -364,6 +492,11 @@ public class NodeJsServer implements AutoCloseable {
     return serverRunning && serverProcess != null && serverProcess.isAlive();
   }
 
+  /** Get the last error message if any. */
+  public String getLastError() {
+    return lastError;
+  }
+
   /** Close the server when the formatter is closed. */
   @Override
   public void close() {
@@ -371,40 +504,5 @@ public class NodeJsServer implements AutoCloseable {
   }
 
   /** Represents an ESLint issue. */
-  public static class LintIssue {
-    private final String ruleId;
-    private final String severity;
-    private final String message;
-    private final int line;
-    private final int column;
-
-    public LintIssue(String ruleId, String severity, String message, int line, int column) {
-      this.ruleId = ruleId;
-      this.severity = severity;
-      this.message = message;
-      this.line = line;
-      this.column = column;
-    }
-
-    // Getters
-    public String getRuleId() {
-      return ruleId;
-    }
-
-    public String getSeverity() {
-      return severity;
-    }
-
-    public String getMessage() {
-      return message;
-    }
-
-    public int getLine() {
-      return line;
-    }
-
-    public int getColumn() {
-      return column;
-    }
-  }
+  public record LintIssue(String ruleId, String severity, String message, int line, int column) {}
 }

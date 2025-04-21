@@ -23,6 +23,9 @@ import java.util.stream.Collectors;
 /**
  * React JS formatter plugin using Node.js tools for formatting and analysis. This implementation
  * uses NodeJsServer to communicate with a Node.js process for JavaScript/React code processing.
+ *
+ * <p>This version includes improved error handling and fallback options when Node.js is
+ * unavailable.
  */
 public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(ReactJSFormatter.class);
@@ -30,18 +33,48 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   private FormatterConfig config;
   private NodeJsServer server;
   private final Map<String, FormatterResult> resultCache = new ConcurrentHashMap<>();
+  private boolean nodeJsAvailable = false;
+  private boolean disabled = false;
+  private String disabledReason = null;
 
   @Override
   public void initialize(FormatterConfig config) {
     this.config = config;
     this.server = new NodeJsServer();
 
-    Map<String, Object> formatterOptions = createFormatterOptions(config);
+    // Check if Node.js is available first, and disable if not
+    nodeJsAvailable = server.isNodeJsAvailable();
+    if (!nodeJsAvailable) {
+      disabledReason = "Node.js not available: " + server.getLastError();
+      disabled = true;
+      logger.warning("ReactJSFormatter disabled: " + disabledReason);
+
+      // Avoid trying to configure if Node.js is unavailable
+      return;
+    }
+
+    // Try to start the server and configure it
     try {
-      server.configure(formatterOptions);
-      logger.info("ReactJSFormatter initialized with Node.js server");
+      boolean started = server.startServer();
+      if (!started) {
+        disabledReason = "Node.js server failed to start: " + server.getLastError();
+        disabled = true;
+        logger.warning("ReactJSFormatter disabled: " + disabledReason);
+        return;
+      }
+
+      Map<String, Object> formatterOptions = createFormatterOptions(config);
+      boolean configured = server.configure(formatterOptions);
+
+      if (!configured) {
+        logger.warning("Failed to configure Node.js server, will use default settings");
+      } else {
+        logger.info("ReactJSFormatter initialized with Node.js server");
+      }
     } catch (Exception e) {
-      logger.log(Level.WARNING, "Error configuring NodeJsServer: " + e.getMessage(), e);
+      disabledReason = "Error initializing: " + e.getMessage();
+      disabled = true;
+      logger.log(Level.WARNING, "ReactJSFormatter disabled: " + disabledReason, e);
     }
   }
 
@@ -74,6 +107,23 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   public FormatterResult format(Path filePath, String sourceCode) {
     if (sourceCode == null || sourceCode.trim().isEmpty()) {
       return FormatterResult.builder().successful(true).formattedCode(sourceCode).build();
+    }
+
+    // If formatter is disabled, return a special result explaining why
+    if (disabled) {
+      FormatterError error =
+          new FormatterError(
+              Severity.WARNING,
+              "ReactJS formatter is disabled: " + disabledReason,
+              1,
+              1,
+              "Install Node.js and required npm packages (prettier, eslint, eslint-plugin-react, eslint-plugin-react-hooks)");
+
+      return FormatterResult.builder()
+          .successful(false)
+          .formattedCode(sourceCode) // Return original code unformatted
+          .addError(error)
+          .build();
     }
 
     String contentHash = calculateHash(sourceCode);
@@ -112,14 +162,26 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
               "Applied " + (isReact ? "React" : "JavaScript") + " formatting"));
 
       // Analyze the code using ESLint
-      List<NodeJsServer.LintIssue> lintIssues = server.analyzeCode(sourceCode, isReact);
+      try {
+        List<NodeJsServer.LintIssue> lintIssues = server.analyzeCode(sourceCode, isReact);
 
-      // Convert lint issues to formatter errors
-      errors = convertLintIssuesToErrors(lintIssues);
+        // Convert lint issues to formatter errors
+        errors = convertLintIssuesToErrors(lintIssues);
 
-      // For React files, analyze for hook dependencies
-      if (isReact && config.getPluginConfig("react", "enforceHookDependencies", true)) {
-        addHookDependencyRefactoring(sourceCode, formattedCode, refactorings);
+        // For React files, analyze for hook dependencies
+        if (isReact && config.getPluginConfig("react", "enforceHookDependencies", true)) {
+          addHookDependencyRefactoring(sourceCode, formattedCode, refactorings);
+        }
+      } catch (IOException e) {
+        logger.log(Level.WARNING, "Linting failed but formatting succeeded: " + e.getMessage(), e);
+        // Add a warning but don't fail the formatting
+        errors.add(
+            new FormatterError(
+                Severity.WARNING,
+                "Code analysis failed but formatting succeeded: " + e.getMessage(),
+                1,
+                1,
+                "Formatting applied, but linting was skipped"));
       }
 
     } catch (IOException e) {
@@ -131,7 +193,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
               "Error processing with Node.js: " + e.getMessage(),
               1,
               1,
-              "Check if Node.js is installed correctly"));
+              "Make sure Node.js is installed and required npm packages are available: prettier, eslint, eslint-plugin-react"));
 
       // Use original code if formatting failed
       formattedCode = sourceCode;
@@ -206,25 +268,25 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
         .map(
             issue -> {
               Severity severity =
-                  switch (issue.getSeverity()) {
+                  switch (issue.severity()) {
                     case "error" -> Severity.ERROR;
                     case "warning" -> Severity.WARNING;
                     default -> Severity.INFO;
                   };
 
               String suggestion = null;
-              if (issue.getRuleId() != null && !issue.getRuleId().isEmpty()) {
-                if (issue.getRuleId().equals("react-hooks/exhaustive-deps")) {
+              if (issue.ruleId() != null && !issue.ruleId().isEmpty()) {
+                if (issue.ruleId().equals("react-hooks/exhaustive-deps")) {
                   suggestion = "Add all dependencies used in the effect to its dependency array";
-                } else if (issue.getRuleId().equals("react-hooks/rules-of-hooks")) {
+                } else if (issue.ruleId().equals("react-hooks/rules-of-hooks")) {
                   suggestion = "Ensure hooks are only called at the top level of your component";
                 } else {
-                  suggestion = "See ESLint rule: " + issue.getRuleId();
+                  suggestion = "See ESLint rule: " + issue.ruleId();
                 }
               }
 
               return new FormatterError(
-                  severity, issue.getMessage(), issue.getLine(), issue.getColumn(), suggestion);
+                  severity, issue.message(), issue.line(), issue.column(), suggestion);
             })
         .collect(Collectors.toList());
   }
@@ -269,6 +331,21 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   /** Get the cache size. */
   public int getCacheSize() {
     return resultCache.size();
+  }
+
+  /** Check if the formatter is disabled. */
+  public boolean isDisabled() {
+    return disabled;
+  }
+
+  /** Get the reason why the formatter is disabled, if it is. */
+  public String getDisabledReason() {
+    return disabledReason;
+  }
+
+  /** Check if Node.js is available. */
+  public boolean isNodeJsAvailable() {
+    return nodeJsAvailable;
   }
 
   @Override

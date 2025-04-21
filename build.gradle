@@ -47,13 +47,28 @@ task installJsTools(type: NpmTask) {
     args = ['install']
 }
 
-task processJsResources(type: Copy) {
+// More robust Node.js resource handling
+task copyNodeResources(type: Copy) {
     from "${project.projectDir}/node"
     into "${project.buildDir}/resources/main/node"
+    include '**/*.js'
+    include '**/*.json'
 }
 
-processResources.dependsOn processJsResources
-processResources.dependsOn installJsTools
+// Copy root-level JS config files
+task copyRootJsResources(type: Copy) {
+    from "${project.projectDir}"
+    into "${project.buildDir}/resources/main"
+    include '.eslintrc.js'
+    include 'package.json'
+}
+
+// Ensure resources are processed in the correct order
+processResources {
+    dependsOn copyNodeResources
+    dependsOn copyRootJsResources
+    dependsOn installJsTools
+}
 
 test {
     useJUnitPlatform()
@@ -87,6 +102,7 @@ tasks.register('testCoverage', Test) {
     description 'Runs tests without coverage enforcement'
 }
 
+// Improve JAR packaging to include all necessary resources
 jar {
     manifest {
         attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
@@ -96,9 +112,17 @@ jar {
         configurations.runtimeClasspath.collect { it.isDirectory()? it : zipTree(it) }
     }
 
+    // Include Node.js resources explicitly
+    from("${project.buildDir}/resources/main") {
+        include 'node/**'
+        include '.eslintrc.js'
+        include 'package.json'
+    }
+
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+// Modify the createDistributable task to include Node.js resources
 tasks.register('createDistributable', Zip) {
     from jar
     from('src/main/resources/scripts') {
@@ -108,8 +132,14 @@ tasks.register('createDistributable', Zip) {
     from('src/main/resources/config') {
         into 'config'
     }
+    // Include Node.js resources in the distribution
+    from('node') {
+        into 'node'
+    }
     from 'README.md'
     from 'LICENSE'
+    from '.eslintrc.js'
+    from 'package.json'
 
     archiveFileName = "advanced-formatter-${version}.zip"
     destinationDirectory = file("$buildDir/distributions")

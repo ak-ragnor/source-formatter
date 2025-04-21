@@ -168,9 +168,9 @@ class NodeJsServerTest {
             issues.stream()
                 .anyMatch(
                     issue ->
-                        issue.getMessage().contains("unused")
-                            || issue.getMessage().contains("semicolon")
-                            || issue.getMessage().contains("missing"));
+                        issue.message().contains("unused")
+                            || issue.message().contains("semicolon")
+                            || issue.message().contains("missing"));
 
         // Log the issues we found
         if (foundPotentialIssue) {
@@ -178,7 +178,7 @@ class NodeJsServerTest {
         } else {
           System.out.println("Found lint issues, but not the expected ones:");
           issues.forEach(
-              issue -> System.out.println(" - " + issue.getSeverity() + ": " + issue.getMessage()));
+              issue -> System.out.println(" - " + issue.severity() + ": " + issue.message()));
         }
       } else {
         System.out.println("Warning: No lint issues found in JavaScript code with obvious issues");
@@ -222,8 +222,8 @@ class NodeJsServerTest {
             issues.stream()
                 .anyMatch(
                     issue ->
-                        issue.getRuleId() != null
-                            && issue.getRuleId().equals("react-hooks/exhaustive-deps"));
+                        issue.ruleId() != null
+                            && issue.ruleId().equals("react-hooks/exhaustive-deps"));
 
         if (foundHooksDependencyIssue) {
           System.out.println("Found React hook dependency issue as expected");
@@ -232,12 +232,7 @@ class NodeJsServerTest {
           issues.forEach(
               issue ->
                   System.out.println(
-                      " - "
-                          + issue.getSeverity()
-                          + ": "
-                          + issue.getRuleId()
-                          + " - "
-                          + issue.getMessage()));
+                      " - " + issue.severity() + ": " + issue.ruleId() + " - " + issue.message()));
         }
       } else {
         System.out.println(
