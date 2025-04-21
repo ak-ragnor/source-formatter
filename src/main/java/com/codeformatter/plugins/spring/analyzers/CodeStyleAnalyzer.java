@@ -48,7 +48,6 @@ public class CodeStyleAnalyzer implements CodeAnalyzer {
 
   @Override
   public boolean canAutoFix() {
-
     return true;
   }
 

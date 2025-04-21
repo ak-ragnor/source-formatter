@@ -19,22 +19,15 @@ repositories {
 }
 
 dependencies {
-    // Core dependencies
     implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.25.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
+    implementation 'com.github.javaparser:javaparser-core:3.25.4'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.2'
 
-    // Spring dependencies
     implementation 'org.springframework:spring-core:6.0.6'
 
-    // JavaScript engine dependencies removed (GraalJS)
-    // implementation 'org.graalvm.js:js:22.3.1'
-    // implementation 'org.graalvm.js:js-scriptengine:22.3.1'
-
-    // CLI
     implementation 'info.picocli:picocli:4.7.1'
 
-    // Testing dependencies
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
     testImplementation 'org.junit.platform:junit-platform-suite:1.9.2'
@@ -59,24 +52,20 @@ task processJsResources(type: Copy) {
     into "${project.buildDir}/resources/main/node"
 }
 
-// Make sure Java code has access to Node.js resources
 processResources.dependsOn processJsResources
 processResources.dependsOn installJsTools
 
 test {
     useJUnitPlatform()
 
-    // Memory settings
     maxHeapSize = "1g"
 
-    // Test output configuration
     testLogging {
         events "passed", "skipped", "failed"
         exceptionFormat "full"
         showStandardStreams = true
     }
 
-    // Parallel execution
     maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2)?: 1
 }
 
