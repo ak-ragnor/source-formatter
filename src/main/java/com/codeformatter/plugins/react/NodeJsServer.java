@@ -35,14 +35,39 @@ import java.util.logging.Logger;
 public class NodeJsServer implements AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(NodeJsServer.class);
   private static final int SERVER_PORT = 9567;
-  private static final int SERVER_START_TIMEOUT_SEC = 10;
+  private static final int SERVER_START_TIMEOUT_SEC = 30; // Increased timeout
   private static final String SERVER_URL = "http://localhost:" + SERVER_PORT;
   private static final ObjectMapper objectMapper = new ObjectMapper();
+
+  // Add singleton pattern to prevent multiple server instances
+  private static NodeJsServer instance;
+  private static final Object instanceLock = new Object();
 
   private Process serverProcess;
   private boolean serverRunning = false;
   private boolean nodeJsAvailable = false;
   private String lastError = null;
+  private Path serverScriptPath = null;
+
+  // Required npm packages
+  private static final String[] REQUIRED_PACKAGES = {
+    "express", "prettier", "eslint", "eslint-plugin-react", "eslint-plugin-react-hooks"
+  };
+
+  /** Get a singleton instance of NodeJsServer. */
+  public static NodeJsServer getInstance() {
+    synchronized (instanceLock) {
+      if (instance == null) {
+        instance = new NodeJsServer();
+      }
+      return instance;
+    }
+  }
+
+  /** Private constructor to enforce singleton pattern. */
+  private NodeJsServer() {
+    // Initialize in constructor
+  }
 
   /**
    * Check if Node.js is available in the system. This performs a basic check to see if the 'node'
@@ -90,15 +115,18 @@ public class NodeJsServer implements AutoCloseable {
     logger.info("Starting Node.js server...");
 
     // Find path to the server script
-    Path serverScript = findServerScript();
-    if (serverScript == null) {
+    serverScriptPath = findServerScript();
+    if (serverScriptPath == null) {
       lastError = "Could not find server.js script";
       return false;
     }
 
+    // Check and install required npm packages before starting the server
+    ensureRequiredPackages();
+
     List<String> command = new ArrayList<>();
     command.add("node");
-    command.add(serverScript.toString());
+    command.add(serverScriptPath.toString());
     command.add(String.valueOf(SERVER_PORT));
 
     ProcessBuilder pb = new ProcessBuilder(command);
@@ -159,6 +187,92 @@ public class NodeJsServer implements AutoCloseable {
 
     logger.info("Node.js server started successfully");
     return true;
+  }
+
+  /** Ensure all required npm packages are installed. */
+  private void ensureRequiredPackages() {
+    if (serverScriptPath == null) {
+      logger.warning("Server script path not found, can't install packages");
+      return;
+    }
+
+    Path nodeDir = serverScriptPath.getParent();
+    if (nodeDir == null) {
+      logger.warning("Cannot determine node directory from server script path");
+      return;
+    }
+
+    // Check for package.json
+    Path packageJsonPath = nodeDir.resolve("package.json");
+    if (!Files.exists(packageJsonPath)) {
+      // Create a minimal package.json if it doesn't exist
+      try {
+        String packageJsonContent =
+            "{\n"
+                + "  \"name\": \"advanced-formatter-js-tools\",\n"
+                + "  \"version\": \"1.0.0\",\n"
+                + "  \"private\": true,\n"
+                + "  \"dependencies\": {\n"
+                + "    \"express\": \"^4.18.2\",\n"
+                + "    \"prettier\": \"^2.8.8\",\n"
+                + "    \"eslint\": \"^8.46.0\",\n"
+                + "    \"eslint-plugin-react\": \"^7.33.0\",\n"
+                + "    \"eslint-plugin-react-hooks\": \"^4.6.0\"\n"
+                + "  }\n"
+                + "}";
+        Files.writeString(packageJsonPath, packageJsonContent);
+        logger.info("Created package.json at: " + packageJsonPath);
+      } catch (IOException e) {
+        logger.log(Level.WARNING, "Failed to create package.json", e);
+      }
+    }
+
+    // Check for node_modules directory
+    Path nodeModulesDir = nodeDir.resolve("node_modules");
+    boolean needsInstall = !Files.exists(nodeModulesDir);
+
+    // Check if specific required packages are missing
+    if (!needsInstall) {
+      for (String pkg : REQUIRED_PACKAGES) {
+        Path packageDir = nodeModulesDir.resolve(pkg);
+        if (!Files.exists(packageDir)) {
+          needsInstall = true;
+          logger.info("Required package missing: " + pkg);
+          break;
+        }
+      }
+    }
+
+    if (needsInstall) {
+      logger.info("Installing required npm packages in: " + nodeDir);
+      try {
+        ProcessBuilder pb = new ProcessBuilder("npm", "install");
+        pb.directory(nodeDir.toFile());
+        pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+
+        // Log npm install output
+        try (BufferedReader reader =
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+          String line;
+          while ((line = reader.readLine()) != null) {
+            logger.fine("npm install: " + line);
+          }
+        }
+
+        int exitCode = process.waitFor();
+        if (exitCode == 0) {
+          logger.info("Successfully installed npm packages");
+        } else {
+          logger.warning("npm install failed with exit code: " + exitCode);
+        }
+      } catch (IOException | InterruptedException e) {
+        logger.log(Level.WARNING, "Failed to install npm packages", e);
+      }
+    } else {
+      logger.fine("All required npm packages are already installed");
+    }
   }
 
   /** Find the location of the server.js script */
@@ -339,6 +453,12 @@ public class NodeJsServer implements AutoCloseable {
       }
     }
 
+    // Find or create eslintrc.js file in the node directory
+    Path eslintConfigFile = _ensureEslintConfig();
+    if (eslintConfigFile == null) {
+      logger.warning("Could not find or create ESLint config file, analysis will be limited");
+    }
+
     try {
       URL url = new URI(SERVER_URL + "/analyze").toURL();
       HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -351,6 +471,10 @@ public class NodeJsServer implements AutoCloseable {
       ObjectNode requestNode = objectMapper.createObjectNode();
       requestNode.put("code", sourceCode);
       requestNode.put("isReact", isReact);
+      // Add the eslint config path if available
+      if (eslintConfigFile != null) {
+        requestNode.put("eslintConfigPath", eslintConfigFile.toString());
+      }
 
       String requestJson = objectMapper.writeValueAsString(requestNode);
 
@@ -364,23 +488,23 @@ public class NodeJsServer implements AutoCloseable {
       int responseCode = conn.getResponseCode();
       if (responseCode != 200) {
         try (BufferedReader br =
-            new BufferedReader(
-                new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                     new BufferedReader(
+                             new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
           StringBuilder errorResponse = new StringBuilder();
           String line;
           while ((line = br.readLine()) != null) {
             errorResponse.append(line);
           }
           throw new IOException(
-              "Server returned error code " + responseCode + ": " + errorResponse.toString());
+                  "Server returned error code " + responseCode + ": " + errorResponse.toString());
         }
       }
 
       // Read successful response
       StringBuilder response = new StringBuilder();
       try (BufferedReader br =
-          new BufferedReader(
-              new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                   new BufferedReader(
+                           new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
         String line;
         while ((line = br.readLine()) != null) {
           response.append(line);
@@ -393,19 +517,19 @@ public class NodeJsServer implements AutoCloseable {
       List<LintIssue> issues = new ArrayList<>();
 
       if (responseNode.has("success")
-          && responseNode.get("success").asBoolean()
-          && responseNode.has("issues")) {
+              && responseNode.get("success").asBoolean()
+              && responseNode.has("issues")) {
 
         JsonNode issuesNode = responseNode.get("issues");
         if (issuesNode.isArray()) {
           for (JsonNode issueNode : issuesNode) {
             issues.add(
-                new LintIssue(
-                    issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
-                    issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
-                    issueNode.has("message") ? issueNode.get("message").asText() : "",
-                    issueNode.has("line") ? issueNode.get("line").asInt() : 1,
-                    issueNode.has("column") ? issueNode.get("column").asInt() : 1));
+                    new LintIssue(
+                            issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
+                            issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
+                            issueNode.has("message") ? issueNode.get("message").asText() : "",
+                            issueNode.has("line") ? issueNode.get("line").asInt() : 1,
+                            issueNode.has("column") ? issueNode.get("column").asInt() : 1));
           }
         }
 
@@ -418,6 +542,99 @@ public class NodeJsServer implements AutoCloseable {
     } catch (URISyntaxException | JsonProcessingException e) {
       throw new IOException("Error communicating with Node.js server: " + e.getMessage(), e);
     }
+  }
+
+  /**
+   * Ensure ESLint configuration file exists in the node directory.
+   * @return Path to the ESLint config file
+   */
+  private Path _ensureEslintConfig() {
+    if (serverScriptPath == null) {
+      logger.warning("Server script path not found, can't locate ESLint config");
+      return null;
+    }
+
+    Path nodeDir = serverScriptPath.getParent();
+    if (nodeDir == null) {
+      logger.warning("Cannot determine node directory from server script path");
+      return null;
+    }
+
+    // Check for .eslintrc.js in the node directory
+    Path eslintConfigPath = nodeDir.resolve(".eslintrc.js");
+
+    if (!Files.exists(eslintConfigPath)) {
+      // Check in parent directory
+      Path parentEslintConfig = nodeDir.getParent().resolve(".eslintrc.js");
+
+      if (Files.exists(parentEslintConfig)) {
+        // Copy from parent to node directory
+        try {
+          Files.copy(parentEslintConfig, eslintConfigPath);
+          logger.info("Copied .eslintrc.js from parent directory to node directory");
+        } catch (IOException e) {
+          logger.log(Level.WARNING, "Failed to copy .eslintrc.js: " + e.getMessage(), e);
+
+          // Create a basic .eslintrc.js if copying failed
+          try {
+            String eslintConfig = "module.exports = {\n" +
+                    "  env: {\n" +
+                    "    browser: true,\n" +
+                    "    es2021: true,\n" +
+                    "    node: true,\n" +
+                    "  },\n" +
+                    "  extends: [\n" +
+                    "    'eslint:recommended'\n" +
+                    "  ],\n" +
+                    "  parserOptions: {\n" +
+                    "    ecmaFeatures: {\n" +
+                    "      jsx: true,\n" +
+                    "    },\n" +
+                    "    ecmaVersion: 'latest',\n" +
+                    "    sourceType: 'module',\n" +
+                    "  },\n" +
+                    "  plugins: [],\n" +
+                    "  rules: {}\n" +
+                    "};\n";
+            Files.writeString(eslintConfigPath, eslintConfig);
+            logger.info("Created basic .eslintrc.js in node directory");
+          } catch (IOException ex) {
+            logger.log(Level.WARNING, "Failed to create .eslintrc.js: " + ex.getMessage(), ex);
+            return null;
+          }
+        }
+      } else {
+        // No existing config, create a basic one
+        try {
+          String eslintConfig = "module.exports = {\n" +
+                  "  env: {\n" +
+                  "    browser: true,\n" +
+                  "    es2021: true,\n" +
+                  "    node: true,\n" +
+                  "  },\n" +
+                  "  extends: [\n" +
+                  "    'eslint:recommended'\n" +
+                  "  ],\n" +
+                  "  parserOptions: {\n" +
+                  "    ecmaFeatures: {\n" +
+                  "      jsx: true,\n" +
+                  "    },\n" +
+                  "    ecmaVersion: 'latest',\n" +
+                  "    sourceType: 'module',\n" +
+                  "  },\n" +
+                  "  plugins: [],\n" +
+                  "  rules: {}\n" +
+                  "};\n";
+          Files.writeString(eslintConfigPath, eslintConfig);
+          logger.info("Created basic .eslintrc.js in node directory");
+        } catch (IOException e) {
+          logger.log(Level.WARNING, "Failed to create .eslintrc.js: " + e.getMessage(), e);
+          return null;
+        }
+      }
+    }
+
+    return eslintConfigPath;
   }
 
   /** Configure the formatter with specific options. */

@@ -40,7 +40,8 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   @Override
   public void initialize(FormatterConfig config) {
     this.config = config;
-    this.server = new NodeJsServer();
+    // Use singleton instance to avoid creating multiple Node.js servers
+    this.server = NodeJsServer.getInstance();
 
     // Check if Node.js is available first, and disable if not
     nodeJsAvailable = server.isNodeJsAvailable();
@@ -350,10 +351,9 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
 
   @Override
   public void close() {
-    if (server != null) {
-      server.close();
-      logger.info("ReactJSFormatter closed, NodeJsServer stopped");
-    }
+    // Don't close the server here anymore since it's a singleton
+    // Just log that we're closing and clear the cache
+    logger.info("ReactJSFormatter closed, NodeJsServer stopped");
     resultCache.clear();
   }
 }

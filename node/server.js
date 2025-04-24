@@ -1,8 +1,8 @@
 const express = require('express');
 const prettier = require('prettier');
 const { ESLint } = require('eslint');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 
 // Get port from command line or use default
 const port = process.argv[2] || 9567;
@@ -60,11 +60,7 @@ app.post('/configure', (req, res) => {
       };
     }
 
-    console.log(
-      'Configuration updated:',
-      JSON.stringify(globalConfig, null, 2)
-    );
-
+    console.log('Configuration updated');
     res.json({ success: true, message: 'Configuration updated' });
   } catch (error) {
     console.error('Error updating configuration:', error);
@@ -124,7 +120,7 @@ app.post('/format', async (req, res) => {
 // Analyze code endpoint
 app.post('/analyze', async (req, res) => {
   try {
-    const { code, isReact } = req.body;
+    const { code, isReact, eslintConfigPath } = req.body;
 
     if (!code) {
       return res.status(400).json({
@@ -135,91 +131,73 @@ app.post('/analyze', async (req, res) => {
 
     // Create a temporary file
     const timestamp = Date.now();
-    const tempFile = path.join(
-      tempDir,
-      `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`
-    );
+    const tempFile = path.join(tempDir, `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`);
     fs.writeFileSync(tempFile, code);
 
-    // Create temporary ESLint config file with our rules
-    const eslintConfigFile = path.join(
-      tempDir,
-      `eslint-config-${timestamp}.json`
-    );
-
-    // Start with base config from .eslintrc.js but override with our settings
-    let eslintConfig = {
-      env: {
-        browser: true,
-        es2021: true,
-        node: true,
-      },
-      extends: [
-        'eslint:recommended',
-        'plugin:react/recommended',
-        'plugin:react-hooks/recommended',
-      ],
-      parserOptions: {
-        ecmaFeatures: {
-          jsx: true,
-        },
-        ecmaVersion: 'latest',
-        sourceType: 'module',
-      },
-      plugins: ['react', 'react-hooks'],
-      rules: {
-        // Default rules
-        'react-hooks/rules-of-hooks': 'error',
-        'react-hooks/exhaustive-deps': 'warn',
-      },
-      settings: {
-        react: {
-          version: 'detect',
-        },
-      },
+    // ESLint config options
+    const eslintOptions = {
+      fix: true, // Always enable auto-fixing
+      extensions: ['.js', '.jsx', '.ts', '.tsx'],
+      resolvePluginsRelativeTo: __dirname // Use the server directory to resolve plugins
     };
 
-    // Merge with global config rules
-    if (globalConfig.eslint && globalConfig.eslint.rules) {
-      eslintConfig.rules = {
-        ...eslintConfig.rules,
-        ...globalConfig.eslint.rules,
-      };
+    // If a specific config path is provided, use it
+    if (eslintConfigPath) {
+      eslintOptions.overrideConfigFile = eslintConfigPath;
+    } else {
+      // Look for .eslintrc.js in the current directory
+      const localConfigPath = path.join(__dirname, '.eslintrc.js');
+      if (fs.existsSync(localConfigPath)) {
+        eslintOptions.overrideConfigFile = localConfigPath;
+      }
     }
 
-    // Write the config to the temp file
-    fs.writeFileSync(eslintConfigFile, JSON.stringify(eslintConfig, null, 2));
-
-    // Initialize ESLint with our custom config
-    const eslint = new ESLint({
-      overrideConfigFile: eslintConfigFile,
-      extensions: ['.js', '.jsx', '.ts', '.tsx'],
-    });
-
-    // Run ESLint
-    const results = await eslint.lintFiles([tempFile]);
-
-    // Clean up temporary files
     try {
+      // Initialize ESLint with our config
+      const eslint = new ESLint(eslintOptions);
+
+      // Run ESLint
+      const results = await eslint.lintFiles([tempFile]);
+
+      // Get fixed code (if fixes were applied)
+      let fixedCode = code;
+      if (results[0].output) {
+        fixedCode = results[0].output;
+        // Read the fixed file
+        fixedCode = fs.readFileSync(tempFile, 'utf8');
+      }
+
+      // Clean up temporary file
       fs.unlinkSync(tempFile);
-      fs.unlinkSync(eslintConfigFile);
-    } catch (cleanupError) {
-      console.warn('Failed to remove temporary files:', cleanupError);
+
+      // Format results
+      const issues = results[0].messages.map(msg => ({
+        ruleId: msg.ruleId || 'syntax-error',
+        severity: msg.severity === 2 ? 'error' : 'warning',
+        message: msg.message,
+        line: msg.line || 1,
+        column: msg.column || 1,
+      }));
+
+      res.json({
+        success: true,
+        issues,
+        fixedCode: fixedCode // Include the fixed code in the response
+      });
+    } catch (lintError) {
+      // Clean up and return error
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      console.error('ESLint error:', lintError);
+      res.status(500).json({
+        success: false,
+        error: lintError.message,
+      });
     }
-
-    // Format results
-    const issues = results[0].messages.map(msg => ({
-      ruleId: msg.ruleId || 'syntax-error',
-      severity: msg.severity === 2 ? 'error' : 'warning',
-      message: msg.message,
-      line: msg.line || 1,
-      column: msg.column || 1,
-    }));
-
-    res.json({
-      success: true,
-      issues,
-    });
   } catch (error) {
     console.error('Analysis error:', error);
     res.status(500).json({

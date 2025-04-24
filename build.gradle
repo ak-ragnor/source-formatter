@@ -36,7 +36,7 @@ dependencies {
 
 // Node.js configuration
 node {
-    version = '16.14.0'
+    version = '22.14.0'
     download = true
     workDir = file("${project.buildDir}/nodejs")
     npmWorkDir = file("${project.buildDir}/npm")

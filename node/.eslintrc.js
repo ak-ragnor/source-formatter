@@ -28,16 +28,18 @@ module.exports = {
     'react/jsx-sort-props': 'warn',
     'react/no-multi-comp': 'warn',
 
-    // General code style rules
+    // General code style rules - set to error for auto-fixing
     'max-lines': ['warn', { max: 150, skipBlankLines: true }],
-    semi: ['error', 'always'],
-    quotes: ['warn', 'single'],
-    indent: ['warn', 2],
-    'comma-dangle': ['warn', 'only-multiline'],
+    'semi': ['error', 'always'],
+    'quotes': ['error', 'single'],
+    'indent': ['error', 2], // Changed from warn to error for auto-fixing
+    'comma-dangle': ['error', 'only-multiline'], // Changed to error for auto-fixing
   },
   settings: {
     react: {
       version: 'detect',
     },
   },
+  // Add fix option to ensure auto-fixing
+  fix: true
 };
