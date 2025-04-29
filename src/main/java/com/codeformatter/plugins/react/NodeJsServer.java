@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.BufferedReader;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -27,15 +28,15 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Manages a local Node.js server for JavaScript/React code processing. The server starts when
- * needed and shuts down when the formatter is closed.
+ * Manages a local Node.js server for JavaScript/React code processing using ESLint with Prettier.
  *
- * <p>This implementation includes improved resource handling to ensure reliable operation.
+ * <p>This implementation includes improved resource handling, better error reporting,
+ * and robust server startup detection.</p>
  */
 public class NodeJsServer implements AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(NodeJsServer.class);
   private static final int SERVER_PORT = 9567;
-  private static final int SERVER_START_TIMEOUT_SEC = 30; // Increased timeout
+  private static final int SERVER_START_TIMEOUT_SEC = 60; // Increased timeout
   private static final String SERVER_URL = "http://localhost:" + SERVER_PORT;
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -48,10 +49,14 @@ public class NodeJsServer implements AutoCloseable {
   private boolean nodeJsAvailable = false;
   private String lastError = null;
   private Path serverScriptPath = null;
+  private final List<String> serverLogs = new ArrayList<>();
 
   // Required npm packages
   private static final String[] REQUIRED_PACKAGES = {
-    "express", "prettier", "eslint", "eslint-plugin-react", "eslint-plugin-react-hooks"
+          "express", "eslint", "eslint-plugin-prettier", "prettier",
+          "eslint-plugin-react", "eslint-plugin-react-hooks",
+          "@babel/core", "@babel/eslint-parser", "@babel/preset-react",
+          "lru-cache"
   };
 
   /** Get a singleton instance of NodeJsServer. */
@@ -83,7 +88,7 @@ public class NodeJsServer implements AutoCloseable {
       int exitCode = process.waitFor();
       if (exitCode == 0) {
         try (BufferedReader reader =
-            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                     new BufferedReader(new InputStreamReader(process.getInputStream()))) {
           String version = reader.readLine();
           logger.info("Node.js detected: " + version);
           nodeJsAvailable = true;
@@ -107,12 +112,15 @@ public class NodeJsServer implements AutoCloseable {
       return true;
     }
 
+    // Reset server logs
+    serverLogs.clear();
+
     // Check if Node.js is available first
     if (!isNodeJsAvailable()) {
       return false;
     }
 
-    logger.info("Starting Node.js server...");
+    logger.info("Starting Node.js server with ESLint+Prettier integration...");
 
     // Find path to the server script
     serverScriptPath = findServerScript();
@@ -144,9 +152,17 @@ public class NodeJsServer implements AutoCloseable {
     new Thread(
             () -> {
               try (BufferedReader reader =
-                  new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
+                           new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                  // Store the log for diagnostic purposes
+                  synchronized (serverLogs) {
+                    serverLogs.add(line);
+                    if (serverLogs.size() > 100) {
+                      serverLogs.remove(0);
+                    }
+                  }
+
                   logger.fine("NodeJsServer: " + line);
                   if (line.contains("Server listening on port")) {
                     serverRunning = true;
@@ -156,19 +172,43 @@ public class NodeJsServer implements AutoCloseable {
                 logger.log(Level.WARNING, "Error reading from Node.js server", e);
               }
             })
-        .start();
+            .start();
 
     // Wait for server to start
     long startTime = System.currentTimeMillis();
+    int retryCount = 0;
     while (!serverRunning
-        && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+            && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
       try {
-        TimeUnit.MILLISECONDS.sleep(100);
+        TimeUnit.MILLISECONDS.sleep(500);
 
         // Try to ping the server
         if (isServerHealthy()) {
           serverRunning = true;
           break;
+        }
+
+        // Check if process is still alive
+        if (!serverProcess.isAlive()) {
+          int exitCode = serverProcess.exitValue();
+          lastError = "Node.js server process exited with code " + exitCode;
+          logger.warning(lastError);
+
+          // Log the process output for diagnostics
+          synchronized (serverLogs) {
+            logger.warning("Server logs:");
+            for (String logLine : serverLogs) {
+              logger.warning("  " + logLine);
+            }
+          }
+
+          return false;
+        }
+
+        // Retry with increasing delay
+        retryCount++;
+        if (retryCount % 10 == 0) {
+          logger.info("Still waiting for server to start... " + (retryCount / 2) + " seconds elapsed");
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -180,6 +220,13 @@ public class NodeJsServer implements AutoCloseable {
     }
 
     if (!serverRunning) {
+      synchronized (serverLogs) {
+        logger.warning("Server logs:");
+        for (String logLine : serverLogs) {
+          logger.warning("  " + logLine);
+        }
+      }
+
       stopServer();
       lastError = "Failed to start Node.js server within timeout";
       return false;
@@ -208,18 +255,27 @@ public class NodeJsServer implements AutoCloseable {
       // Create a minimal package.json if it doesn't exist
       try {
         String packageJsonContent =
-            "{\n"
-                + "  \"name\": \"advanced-formatter-js-tools\",\n"
-                + "  \"version\": \"1.0.0\",\n"
-                + "  \"private\": true,\n"
-                + "  \"dependencies\": {\n"
-                + "    \"express\": \"^4.18.2\",\n"
-                + "    \"prettier\": \"^2.8.8\",\n"
-                + "    \"eslint\": \"^8.46.0\",\n"
-                + "    \"eslint-plugin-react\": \"^7.33.0\",\n"
-                + "    \"eslint-plugin-react-hooks\": \"^4.6.0\"\n"
-                + "  }\n"
-                + "}";
+                "{\n"
+                        + "  \"name\": \"advanced-formatter-js-tools\",\n"
+                        + "  \"version\": \"1.0.0\",\n"
+                        + "  \"private\": true,\n"
+                        + "  \"dependencies\": {\n"
+                        + "    \"@babel/core\": \"^7.22.9\",\n"
+                        + "    \"@babel/eslint-parser\": \"^7.22.9\",\n"
+                        + "    \"@babel/preset-react\": \"^7.22.5\",\n"
+                        + "    \"eslint\": \"^8.46.0\",\n"
+                        + "    \"eslint-config-airbnb\": \"^19.0.4\",\n"
+                        + "    \"eslint-config-prettier\": \"^8.10.0\",\n"
+                        + "    \"eslint-plugin-import\": \"^2.29.1\",\n"
+                        + "    \"eslint-plugin-jsx-a11y\": \"^6.8.0\",\n"
+                        + "    \"eslint-plugin-prettier\": \"^5.0.0\",\n"
+                        + "    \"eslint-plugin-react\": \"^7.33.2\",\n"
+                        + "    \"eslint-plugin-react-hooks\": \"^4.6.0\",\n"
+                        + "    \"express\": \"^4.18.2\",\n"
+                        + "    \"lru-cache\": \"^10.0.1\",\n"
+                        + "    \"prettier\": \"^3.0.0\"\n"
+                        + "  }\n"
+                        + "}";
         Files.writeString(packageJsonPath, packageJsonContent);
         logger.info("Created package.json at: " + packageJsonPath);
       } catch (IOException e) {
@@ -254,7 +310,7 @@ public class NodeJsServer implements AutoCloseable {
 
         // Log npm install output
         try (BufferedReader reader =
-            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                     new BufferedReader(new InputStreamReader(process.getInputStream()))) {
           String line;
           while ((line = reader.readLine()) != null) {
             logger.fine("npm install: " + line);
@@ -295,12 +351,12 @@ public class NodeJsServer implements AutoCloseable {
 
     // Application directory structure locations
     possibleLocations.add(
-        Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
+            Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
     possibleLocations.add(
-        Paths.get(
-            System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
+            Paths.get(
+                    System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
     possibleLocations.add(
-        Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
+            Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
 
     // Log attempted locations
     logger.fine("Searching for server.js in locations: " + possibleLocations);
@@ -330,7 +386,7 @@ public class NodeJsServer implements AutoCloseable {
         // Extract to temp directory
         Path tempServerJs = nodeDir.resolve("server.js");
         try (InputStream in = serverJsResource.openStream();
-            OutputStream out = new FileOutputStream(tempServerJs.toFile())) {
+             OutputStream out = new FileOutputStream(tempServerJs.toFile())) {
           byte[] buffer = new byte[8192];
           int bytesRead;
           while ((bytesRead = in.read(buffer)) != -1) {
@@ -349,7 +405,7 @@ public class NodeJsServer implements AutoCloseable {
 
         // Try to find the resource
         InputStream serverJsStream =
-            getClass().getClassLoader().getResource("node/server.js").openStream();
+                getClass().getClassLoader().getResource("node/server.js").openStream();
         if (serverJsStream != null) {
           // Copy to user home
           try (OutputStream out = new FileOutputStream(userHomeNode.toFile())) {
@@ -382,14 +438,32 @@ public class NodeJsServer implements AutoCloseable {
       conn.setReadTimeout(1000);
 
       int responseCode = conn.getResponseCode();
-      return responseCode == 200;
+      if (responseCode == 200) {
+        // Read response to confirm it's our server
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+          StringBuilder response = new StringBuilder();
+          String line;
+          while ((line = br.readLine()) != null) {
+            response.append(line);
+          }
+
+          // Check if it's actually our server by looking for expected content
+          return response.toString().contains("eslint-with-prettier");
+        }
+      }
+      return false;
     } catch (Exception e) {
+      // Expected during startup, don't log
       return false;
     }
   }
 
-  /** Format JavaScript/React code using the server. */
-  public String formatCode(String sourceCode, boolean isReact) throws IOException {
+  /**
+   * Generic method to call any server endpoint.
+   * This consolidates HTTP communication logic for all endpoints.
+   */
+  public String callEndpoint(String endpoint, String requestJson) throws IOException {
     if (!serverRunning) {
       boolean started = startServer();
       if (!started) {
@@ -398,85 +472,14 @@ public class NodeJsServer implements AutoCloseable {
     }
 
     try {
-      URL url = new URI(SERVER_URL + "/format").toURL();
+      URL url = new URI(SERVER_URL + endpoint).toURL();
       HttpURLConnection conn = (HttpURLConnection) url.openConnection();
       conn.setRequestMethod("POST");
       conn.setRequestProperty("Content-Type", "application/json");
       conn.setRequestProperty("Accept", "application/json");
       conn.setDoOutput(true);
-
-      // Create request JSON
-      ObjectNode requestNode = objectMapper.createObjectNode();
-      requestNode.put("code", sourceCode);
-      requestNode.put("isReact", isReact);
-
-      String requestJson = objectMapper.writeValueAsString(requestNode);
-
-      // Send request
-      try (OutputStream os = conn.getOutputStream()) {
-        byte[] input = requestJson.getBytes(StandardCharsets.UTF_8);
-        os.write(input, 0, input.length);
-      }
-
-      // Read response
-      StringBuilder response = new StringBuilder();
-      try (BufferedReader br =
-          new BufferedReader(
-              new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-        String line;
-        while ((line = br.readLine()) != null) {
-          response.append(line);
-        }
-      }
-
-      // Parse JSON response
-      JsonNode responseNode = objectMapper.readTree(response.toString());
-
-      if (responseNode.has("success") && responseNode.get("success").asBoolean()) {
-        return responseNode.get("formattedCode").asText();
-      } else if (responseNode.has("error")) {
-        throw new IOException("Error formatting code: " + responseNode.get("error").asText());
-      } else {
-        throw new IOException("Unknown error in formatting response");
-      }
-    } catch (URISyntaxException | JsonProcessingException e) {
-      throw new IOException("Error communicating with Node.js server: " + e.getMessage(), e);
-    }
-  }
-
-  /** Analyze JavaScript/React code using the server. */
-  public List<LintIssue> analyzeCode(String sourceCode, boolean isReact) throws IOException {
-    if (!serverRunning) {
-      boolean started = startServer();
-      if (!started) {
-        throw new IOException("Node.js server not available: " + lastError);
-      }
-    }
-
-    // Find or create eslintrc.js file in the node directory
-    Path eslintConfigFile = _ensureEslintConfig();
-    if (eslintConfigFile == null) {
-      logger.warning("Could not find or create ESLint config file, analysis will be limited");
-    }
-
-    try {
-      URL url = new URI(SERVER_URL + "/analyze").toURL();
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-      conn.setRequestMethod("POST");
-      conn.setRequestProperty("Content-Type", "application/json");
-      conn.setRequestProperty("Accept", "application/json");
-      conn.setDoOutput(true);
-
-      // Create request JSON
-      ObjectNode requestNode = objectMapper.createObjectNode();
-      requestNode.put("code", sourceCode);
-      requestNode.put("isReact", isReact);
-      // Add the eslint config path if available
-      if (eslintConfigFile != null) {
-        requestNode.put("eslintConfigPath", eslintConfigFile.toString());
-      }
-
-      String requestJson = objectMapper.writeValueAsString(requestNode);
+      conn.setConnectTimeout(30000); // 30 seconds
+      conn.setReadTimeout(60000);    // 60 seconds
 
       // Send request
       try (OutputStream os = conn.getOutputStream()) {
@@ -487,157 +490,90 @@ public class NodeJsServer implements AutoCloseable {
       // Check response code
       int responseCode = conn.getResponseCode();
       if (responseCode != 200) {
+        StringBuilder errorResponse = new StringBuilder();
         try (BufferedReader br =
-            new BufferedReader(
-                new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-          StringBuilder errorResponse = new StringBuilder();
+                     new BufferedReader(
+                             new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
           String line;
           while ((line = br.readLine()) != null) {
             errorResponse.append(line);
           }
-          throw new IOException(
-              "Server returned error code " + responseCode + ": " + errorResponse.toString());
         }
+        throw new IOException(
+                "Server returned error code " + responseCode + ": " + errorResponse.toString());
       }
 
       // Read successful response
       StringBuilder response = new StringBuilder();
       try (BufferedReader br =
-          new BufferedReader(
-              new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                   new BufferedReader(
+                           new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
         String line;
         while ((line = br.readLine()) != null) {
           response.append(line);
         }
       }
 
-      // Parse JSON response
-      JsonNode responseNode = objectMapper.readTree(response.toString());
-
-      List<LintIssue> issues = new ArrayList<>();
-
-      if (responseNode.has("success")
-          && responseNode.get("success").asBoolean()
-          && responseNode.has("issues")) {
-
-        JsonNode issuesNode = responseNode.get("issues");
-        if (issuesNode.isArray()) {
-          for (JsonNode issueNode : issuesNode) {
-            issues.add(
-                new LintIssue(
-                    issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
-                    issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
-                    issueNode.has("message") ? issueNode.get("message").asText() : "",
-                    issueNode.has("line") ? issueNode.get("line").asInt() : 1,
-                    issueNode.has("column") ? issueNode.get("column").asInt() : 1));
-          }
-        }
-
-        return issues;
-      } else if (responseNode.has("error")) {
-        throw new IOException("Error analyzing code: " + responseNode.get("error").asText());
-      } else {
-        throw new IOException("Unknown error in analysis response");
-      }
-    } catch (URISyntaxException | JsonProcessingException e) {
-      throw new IOException("Error communicating with Node.js server: " + e.getMessage(), e);
+      return response.toString();
+    } catch (URISyntaxException e) {
+      throw new IOException("Error creating URI for endpoint: " + e.getMessage(), e);
     }
   }
 
-  /**
-   * Ensure ESLint configuration file exists in the node directory.
-   *
-   * @return Path to the ESLint config file
-   */
-  private Path _ensureEslintConfig() {
-    if (serverScriptPath == null) {
-      logger.warning("Server script path not found, can't locate ESLint config");
-      return null;
+  /** Format JavaScript/React code using the server. */
+  public String formatCode(String sourceCode, boolean isReact) throws IOException {
+    ObjectNode requestNode = objectMapper.createObjectNode();
+    requestNode.put("code", sourceCode);
+    requestNode.put("isReact", isReact);
+
+    String responseJson = callEndpoint("/format", objectMapper.writeValueAsString(requestNode));
+    JsonNode responseNode = objectMapper.readTree(responseJson);
+
+    if (responseNode.has("success") && responseNode.get("success").asBoolean()) {
+      return responseNode.get("formattedCode").asText();
+    } else if (responseNode.has("error")) {
+      throw new IOException("Error formatting code: " + responseNode.get("error").asText());
+    } else {
+      throw new IOException("Unknown error in formatting response");
     }
+  }
 
-    Path nodeDir = serverScriptPath.getParent();
-    if (nodeDir == null) {
-      logger.warning("Cannot determine node directory from server script path");
-      return null;
-    }
+  /** Analyze JavaScript/React code using the server. */
+  public List<LintIssue> analyzeCode(String sourceCode, boolean isReact) throws IOException {
+    ObjectNode requestNode = objectMapper.createObjectNode();
+    requestNode.put("code", sourceCode);
+    requestNode.put("isReact", isReact);
 
-    // Check for .eslintrc.js in the node directory
-    Path eslintConfigPath = nodeDir.resolve(".eslintrc.js");
+    String responseJson = callEndpoint("/analyze", objectMapper.writeValueAsString(requestNode));
+    JsonNode responseNode = objectMapper.readTree(responseJson);
 
-    if (!Files.exists(eslintConfigPath)) {
-      // Check in parent directory
-      Path parentEslintConfig = nodeDir.getParent().resolve(".eslintrc.js");
+    List<LintIssue> issues = new ArrayList<>();
 
-      if (Files.exists(parentEslintConfig)) {
-        // Copy from parent to node directory
-        try {
-          Files.copy(parentEslintConfig, eslintConfigPath);
-          logger.info("Copied .eslintrc.js from parent directory to node directory");
-        } catch (IOException e) {
-          logger.log(Level.WARNING, "Failed to copy .eslintrc.js: " + e.getMessage(), e);
-
-          // Create a basic .eslintrc.js if copying failed
-          try {
-            String eslintConfig =
-                "module.exports = {\n"
-                    + "  env: {\n"
-                    + "    browser: true,\n"
-                    + "    es2021: true,\n"
-                    + "    node: true,\n"
-                    + "  },\n"
-                    + "  extends: [\n"
-                    + "    'eslint:recommended'\n"
-                    + "  ],\n"
-                    + "  parserOptions: {\n"
-                    + "    ecmaFeatures: {\n"
-                    + "      jsx: true,\n"
-                    + "    },\n"
-                    + "    ecmaVersion: 'latest',\n"
-                    + "    sourceType: 'module',\n"
-                    + "  },\n"
-                    + "  plugins: [],\n"
-                    + "  rules: {}\n"
-                    + "};\n";
-            Files.writeString(eslintConfigPath, eslintConfig);
-            logger.info("Created basic .eslintrc.js in node directory");
-          } catch (IOException ex) {
-            logger.log(Level.WARNING, "Failed to create .eslintrc.js: " + ex.getMessage(), ex);
-            return null;
+    if (responseNode.has("success") && responseNode.get("success").asBoolean() && responseNode.has("issues")) {
+      JsonNode issuesNode = responseNode.get("issues");
+      if (issuesNode.isArray()) {
+        for (JsonNode issueNode : issuesNode) {
+          String suggestion = null;
+          if (issueNode.has("suggestion") && !issueNode.get("suggestion").isNull()) {
+            suggestion = issueNode.get("suggestion").asText();
           }
-        }
-      } else {
-        // No existing config, create a basic one
-        try {
-          String eslintConfig =
-              "module.exports = {\n"
-                  + "  env: {\n"
-                  + "    browser: true,\n"
-                  + "    es2021: true,\n"
-                  + "    node: true,\n"
-                  + "  },\n"
-                  + "  extends: [\n"
-                  + "    'eslint:recommended'\n"
-                  + "  ],\n"
-                  + "  parserOptions: {\n"
-                  + "    ecmaFeatures: {\n"
-                  + "      jsx: true,\n"
-                  + "    },\n"
-                  + "    ecmaVersion: 'latest',\n"
-                  + "    sourceType: 'module',\n"
-                  + "  },\n"
-                  + "  plugins: [],\n"
-                  + "  rules: {}\n"
-                  + "};\n";
-          Files.writeString(eslintConfigPath, eslintConfig);
-          logger.info("Created basic .eslintrc.js in node directory");
-        } catch (IOException e) {
-          logger.log(Level.WARNING, "Failed to create .eslintrc.js: " + e.getMessage(), e);
-          return null;
+
+          issues.add(
+                  new LintIssue(
+                          issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
+                          issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
+                          issueNode.has("message") ? issueNode.get("message").asText() : "",
+                          issueNode.has("line") ? issueNode.get("line").asInt() : 1,
+                          issueNode.has("column") ? issueNode.get("column").asInt() : 1,
+                          suggestion));
         }
       }
+      return issues;
+    } else if (responseNode.has("error")) {
+      throw new IOException("Error analyzing code: " + responseNode.get("error").asText());
+    } else {
+      throw new IOException("Unknown error in analysis response");
     }
-
-    return eslintConfigPath;
   }
 
   /** Configure the formatter with specific options. */
@@ -656,31 +592,11 @@ public class NodeJsServer implements AutoCloseable {
     }
 
     try {
-      URL url = new URI(SERVER_URL + "/configure").toURL();
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-      conn.setRequestMethod("POST");
-      conn.setRequestProperty("Content-Type", "application/json");
-      conn.setRequestProperty("Accept", "application/json");
-      conn.setDoOutput(true);
-
-      // Convert options to JSON
       String requestJson = objectMapper.writeValueAsString(options);
+      String responseJson = callEndpoint("/configure", requestJson);
 
-      // Send request
-      try (OutputStream os = conn.getOutputStream()) {
-        byte[] input = requestJson.getBytes(StandardCharsets.UTF_8);
-        os.write(input, 0, input.length);
-      }
-
-      // Check response code
-      int responseCode = conn.getResponseCode();
-      if (responseCode != 200) {
-        logger.warning("Server returned error code " + responseCode + " during configuration");
-        return false;
-      }
-
-      logger.fine("Node.js server configured successfully");
-      return true;
+      JsonNode responseNode = objectMapper.readTree(responseJson);
+      return responseNode.has("success") && responseNode.get("success").asBoolean();
     } catch (Exception e) {
       logger.log(Level.WARNING, "Error configuring Node.js server: " + e.getMessage(), e);
       return false;
@@ -723,6 +639,6 @@ public class NodeJsServer implements AutoCloseable {
     stopServer();
   }
 
-  /** Represents an ESLint issue. */
-  public record LintIssue(String ruleId, String severity, String message, int line, int column) {}
+  /** Represents an ESLint issue with enhanced suggestion support. */
+  public record LintIssue(String ruleId, String severity, String message, int line, int column, String suggestion) {}
 }

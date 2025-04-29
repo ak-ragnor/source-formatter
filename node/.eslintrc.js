@@ -8,32 +8,58 @@ module.exports = {
   extends: [
     'airbnb',
     'airbnb/hooks',
+    'plugin:react/recommended',
+    'plugin:jsx-a11y/recommended',
     'plugin:security/recommended-legacy',
     'plugin:sonarjs/recommended-legacy',
+    'plugin:prettier/recommended' // This will enable eslint-plugin-prettier and eslint-config-prettier
   ],
+  parser: '@babel/eslint-parser',
   parserOptions: {
     ecmaFeatures: {
       jsx: true,
     },
     ecmaVersion: 'latest',
     sourceType: 'module',
+    requireConfigFile: false,
+    babelOptions: {
+      presets: ['@babel/preset-react']
+    }
   },
-  plugins: ['react', 'jsx-a11y', 'import', 'security'],
+  plugins: ['react', 'react-hooks', 'jsx-a11y', 'import', 'security', 'prettier'],
   settings: {
     react: {
       version: 'detect',
     },
     'import/resolver': {
       node: {
-        extensions: ['.js', '.jsx'],
+        extensions: ['.js', '.jsx', '.ts', '.tsx'],
       },
     },
   },
   rules: {
-    // Overrides and custom rules:
-    'react/prop-types': 'off',
+    'prettier/prettier': ['error', {
+      printWidth: 100,
+      tabWidth: 2,
+      useTabs: false,
+      semi: true,
+      singleQuote: true,
+      trailingComma: 'es5',
+      bracketSpacing: true,
+      jsxBracketSameLine: false,
+      arrowParens: 'avoid',
+    }],
+
+    // React rules with better suggestions
+    'react/prop-types': ['error', {
+      skipUndeclared: true
+    }],
     'react/react-in-jsx-scope': 'off',
     'react/jsx-filename-extension': [1, { extensions: ['.js', '.jsx'] }],
+    'react-hooks/rules-of-hooks': 'error',
+    'react-hooks/exhaustive-deps': 'warn',
+
+    // Import rules
     'import/no-extraneous-dependencies': [
       'error',
       {
@@ -51,8 +77,25 @@ module.exports = {
         peerDependencies: false,
       },
     ],
+
+    // Code style
     'no-console': ['warn', { allow: ['warn', 'error'] }],
-    // Add any specific rule overrides or custom rules here
+    'max-len': ['warn', {
+      code: 100,
+      ignoreComments: true,
+      ignoreUrls: true,
+      ignoreStrings: true,
+      ignoreTemplateLiterals: true
+    }],
+
+    // Common issues with better suggestions
+    'no-unused-vars': ['warn', {
+      vars: 'all',
+      args: 'after-used',
+      ignoreRestSiblings: true,
+      argsIgnorePattern: '^_',
+      caughtErrors: 'none'
+    }]
   },
   overrides: [
     {
