@@ -925,6 +925,23 @@ public class FormatterCli {
               _printSuccess("Formatted: " + file);
               successCount.incrementAndGet();
 
+              // NEW CODE: Always display ESLint warnings/errors even if formatting succeeded
+              if (!result.getErrors().isEmpty()) {
+                _printWarning("  Issues found:");
+
+                // Group errors by severity for better readability
+                Map<Severity, List<FormatterError>> errorsBySeverity =
+                    errorFormatter.groupBySeverity(result.getErrors());
+
+                // Display errors first, then warnings, then info
+                _printErrorsBySeverity(errorsBySeverity, Severity.ERROR);
+                _printErrorsBySeverity(errorsBySeverity, Severity.WARNING);
+                _printErrorsBySeverity(errorsBySeverity, Severity.INFO);
+
+                // Also add to the errorsByFile map for summary
+                errorsByFile.put(file, result.getErrors());
+              }
+
               if (!ciMode && !result.getAppliedRefactorings().isEmpty() && verbose) {
                 _printInfo("  Applied refactorings:");
                 result

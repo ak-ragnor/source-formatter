@@ -127,7 +127,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
           .build();
     }
 
-    String contentHash = calculateHash(sourceCode);
+    String contentHash = _calculateHash(sourceCode);
 
     if (resultCache.containsKey(contentHash)) {
       logger.fine("Cache hit for " + filePath);
@@ -137,6 +137,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     List<FormatterError> errors = new ArrayList<>();
     List<Refactoring> refactorings = new ArrayList<>();
     String formattedCode = sourceCode;
+    boolean lintingSucceeded = false;
 
     try {
       boolean isReact = isReactFile(filePath, sourceCode);
@@ -145,44 +146,48 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
       // Format the code using Node.js server
       formattedCode = server.formatCode(sourceCode, isReact);
 
-      // Return early if no changes were made (already formatted)
-      if (formattedCode.equals(sourceCode)) {
-        FormatterResult result =
-            FormatterResult.builder().successful(true).formattedCode(formattedCode).build();
-
-        resultCache.put(contentHash, result);
-        return result;
-      }
-
-      // Add refactoring info if code was changed
-      refactorings.add(
-          new Refactoring(
-              "FORMATTING",
-              1,
-              countLines(sourceCode),
-              "Applied " + (isReact ? "React" : "JavaScript") + " formatting"));
-
-      // Analyze the code using ESLint
+      // Analyze the code using ESLint - separate process from formatting
       try {
         List<NodeJsServer.LintIssue> lintIssues = server.analyzeCode(sourceCode, isReact);
 
-        // Convert lint issues to formatter errors
-        errors = convertLintIssuesToErrors(lintIssues);
+        // Create a proper ReactAnalyzerResult
+        ReactAnalyzerResult analyzerResult =
+            new ReactAnalyzerResult(_convertLintIssuesToErrors(lintIssues));
+
+        // Add analyzer errors to our error list
+        errors.addAll(analyzerResult.getErrors());
+        lintingSucceeded = true;
 
         // For React files, analyze for hook dependencies
         if (isReact && config.getPluginConfig("react", "enforceHookDependencies", true)) {
-          addHookDependencyRefactoring(sourceCode, formattedCode, refactorings);
+          // Check for potential hook issues and add refactorings
+          ReactRefactoringResult refactoringResult =
+              analyzeHookDependencies(sourceCode, formattedCode);
+          errors.addAll(refactoringResult.getErrors());
+          refactorings.addAll(refactoringResult.getAppliedRefactorings());
         }
+
       } catch (IOException e) {
         logger.log(Level.WARNING, "Linting failed but formatting succeeded: " + e.getMessage(), e);
-        // Add a warning but don't fail the formatting
+
+        // Use ERROR severity to ensure it shows in output
         errors.add(
             new FormatterError(
-                Severity.WARNING,
-                "Code analysis failed but formatting succeeded: " + e.getMessage(),
+                Severity.ERROR, // Changed from WARNING to ERROR to make sure it shows up
+                "ESLint analysis failed: " + e.getMessage(),
                 1,
                 1,
-                "Formatting applied, but linting was skipped"));
+                "Install missing ESLint plugins or check server configuration"));
+      }
+
+      // If formatting changed the code, add a refactoring
+      if (!formattedCode.equals(sourceCode)) {
+        refactorings.add(
+            new Refactoring(
+                "FORMATTING",
+                1,
+                countLines(sourceCode),
+                "Applied " + (isReact ? "React" : "JavaScript") + " formatting"));
       }
 
     } catch (IOException e) {
@@ -200,10 +205,21 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
       formattedCode = sourceCode;
     }
 
+    // If linting didn't succeed but formatting did, we should let the user know
+    if (!lintingSucceeded && !formattedCode.equals(sourceCode)) {
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "Code was formatted successfully but ESLint analysis was skipped",
+              1,
+              1,
+              "Install missing ESLint plugins to enable full code analysis"));
+    }
+
     // Determine if formatting was successful
-    boolean successful =
-        errors.stream()
-            .noneMatch(e -> e.getSeverity() == Severity.FATAL || e.getSeverity() == Severity.ERROR);
+    // Format is successful if there are no FATAL errors, even if there are regular errors or
+    // warnings
+    boolean successful = errors.stream().noneMatch(e -> e.getSeverity() == Severity.FATAL);
 
     FormatterResult result =
         FormatterResult.builder()
@@ -217,6 +233,47 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     resultCache.put(contentHash, result);
 
     return result;
+  }
+
+  /** Analyze React code for hook dependencies issues and create refactoring suggestions */
+  private ReactRefactoringResult analyzeHookDependencies(
+      String originalCode, String formattedCode) {
+    List<FormatterError> errors = new ArrayList<>();
+    List<Refactoring> refactorings = new ArrayList<>();
+
+    // Simple heuristic: check if empty dependency arrays were modified
+    if (originalCode.contains("useEffect(() => {") && originalCode.contains("}, [])")) {
+      if (formattedCode.contains("}, [") && !formattedCode.contains("}, []")) {
+        refactorings.add(
+            new Refactoring(
+                "HOOK_DEPENDENCIES_FIX",
+                1,
+                countLines(originalCode),
+                "Fixed React hook dependencies"));
+
+        // Add a warning about the hook dependency issue
+        errors.add(
+            new FormatterError(
+                Severity.WARNING,
+                "React hook is missing dependencies in dependency array",
+                1,
+                1,
+                "Add all dependencies used in the effect to its dependency array"));
+      }
+    }
+
+    // Check for useCallback without dependencies
+    if (originalCode.contains("useCallback(") && originalCode.contains("}, [])")) {
+      errors.add(
+          new FormatterError(
+              Severity.WARNING,
+              "useCallback hook appears to be missing dependencies",
+              1,
+              1,
+              "Add all dependencies used in the callback to its dependency array"));
+    }
+
+    return new ReactRefactoringResult(refactorings, errors);
   }
 
   /** Check if hook dependency fixing was applied and add a refactoring if so. */
@@ -244,7 +301,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   }
 
   /** Calculate a hash of the source code for caching. */
-  private String calculateHash(String sourceCode) {
+  private String _calculateHash(String sourceCode) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       byte[] hash = digest.digest(sourceCode.getBytes());
@@ -264,7 +321,7 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   }
 
   /** Convert ESLint issues to formatter errors. */
-  private List<FormatterError> convertLintIssuesToErrors(List<NodeJsServer.LintIssue> lintIssues) {
+  private List<FormatterError> _convertLintIssuesToErrors(List<NodeJsServer.LintIssue> lintIssues) {
     return lintIssues.stream()
         .map(
             issue -> {

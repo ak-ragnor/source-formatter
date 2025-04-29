@@ -3,11 +3,13 @@ module.exports = {
     browser: true,
     es2021: true,
     node: true,
+    jest: true,
   },
   extends: [
-    'eslint:recommended',
-    'plugin:react/recommended',
-    'plugin:react-hooks/recommended',
+    'airbnb',
+    'airbnb/hooks',
+    'plugin:security/recommended-legacy',
+    'plugin:sonarjs/recommended-legacy',
   ],
   parserOptions: {
     ecmaFeatures: {
@@ -16,30 +18,75 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  plugins: ['react', 'react-hooks'],
-  rules: {
-    // Hook rules
-    'react-hooks/rules-of-hooks': 'error',
-    'react-hooks/exhaustive-deps': 'warn',
-
-    // Component structure rules
-    'react/jsx-max-depth': ['warn', { max: 4 }],
-    'react/jsx-max-props-per-line': ['warn', { maximum: 3, when: 'multiline' }],
-    'react/jsx-sort-props': 'warn',
-    'react/no-multi-comp': 'warn',
-
-    // General code style rules - set to error for auto-fixing
-    'max-lines': ['warn', { max: 150, skipBlankLines: true }],
-    'semi': ['error', 'always'],
-    'quotes': ['error', 'single'],
-    'indent': ['error', 2], // Changed from warn to error for auto-fixing
-    'comma-dangle': ['error', 'only-multiline'], // Changed to error for auto-fixing
-  },
+  plugins: ['react', 'jsx-a11y', 'import', 'security'],
   settings: {
     react: {
       version: 'detect',
     },
+    'import/resolver': {
+      node: {
+        extensions: ['.js', '.jsx'],
+      },
+    },
   },
-  // Add fix option to ensure auto-fixing
-  fix: true
+  rules: {
+    // Overrides and custom rules:
+    'react/prop-types': 'off',
+    'react/react-in-jsx-scope': 'off',
+    'react/jsx-filename-extension': [1, { extensions: ['.js', '.jsx'] }],
+    'import/no-extraneous-dependencies': [
+      'error',
+      {
+        devDependencies: [
+          '**/*.test.js',
+          '**/*.spec.js',
+          '**/__tests__/**',
+          '**/webpack.config.js',
+          '**/jest.config.js',
+          '**/cypress/**',
+          '**/storybook/**',
+          '**/vite.config.js',
+        ],
+        optionalDependencies: false,
+        peerDependencies: false,
+      },
+    ],
+    'no-console': ['warn', { allow: ['warn', 'error'] }],
+    // Add any specific rule overrides or custom rules here
+  },
+  overrides: [
+    {
+      files: ['*.js', '*.jsx'],
+      rules: {
+        'react/prop-types': 'error',
+      },
+    },
+    {
+      files: ['*.test.js', '*.spec.js', '**/__tests__/**'],
+      extends: ['plugin:jest/recommended'],
+      plugins: ['jest'],
+      rules: {
+        'no-unused-expressions': 'off',
+        'jest/no-disabled-tests': 'warn',
+        'jest/no-focused-tests': 'error',
+        'jest/no-identical-title': 'error',
+        'jest/prefer-to-have-length': 'warn',
+        'jest/valid-expect': 'error',
+        'react/display-name': 'off',
+      },
+    },
+    {
+      files: [
+        '**/webpack.config.js',
+        '**/vite.config.js',
+        '**/jest.config.js',
+        '**/esbuild.config.js',
+      ],
+      rules: {
+        'no-console': 'off',
+        'import/no-extraneous-dependencies': 'off',
+        'no-process-env': 'off',
+      },
+    },
+  ],
 };

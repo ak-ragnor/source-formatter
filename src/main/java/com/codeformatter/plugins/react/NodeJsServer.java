@@ -488,23 +488,23 @@ public class NodeJsServer implements AutoCloseable {
       int responseCode = conn.getResponseCode();
       if (responseCode != 200) {
         try (BufferedReader br =
-                     new BufferedReader(
-                             new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+            new BufferedReader(
+                new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
           StringBuilder errorResponse = new StringBuilder();
           String line;
           while ((line = br.readLine()) != null) {
             errorResponse.append(line);
           }
           throw new IOException(
-                  "Server returned error code " + responseCode + ": " + errorResponse.toString());
+              "Server returned error code " + responseCode + ": " + errorResponse.toString());
         }
       }
 
       // Read successful response
       StringBuilder response = new StringBuilder();
       try (BufferedReader br =
-                   new BufferedReader(
-                           new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+          new BufferedReader(
+              new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
         String line;
         while ((line = br.readLine()) != null) {
           response.append(line);
@@ -517,19 +517,19 @@ public class NodeJsServer implements AutoCloseable {
       List<LintIssue> issues = new ArrayList<>();
 
       if (responseNode.has("success")
-              && responseNode.get("success").asBoolean()
-              && responseNode.has("issues")) {
+          && responseNode.get("success").asBoolean()
+          && responseNode.has("issues")) {
 
         JsonNode issuesNode = responseNode.get("issues");
         if (issuesNode.isArray()) {
           for (JsonNode issueNode : issuesNode) {
             issues.add(
-                    new LintIssue(
-                            issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
-                            issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
-                            issueNode.has("message") ? issueNode.get("message").asText() : "",
-                            issueNode.has("line") ? issueNode.get("line").asInt() : 1,
-                            issueNode.has("column") ? issueNode.get("column").asInt() : 1));
+                new LintIssue(
+                    issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
+                    issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
+                    issueNode.has("message") ? issueNode.get("message").asText() : "",
+                    issueNode.has("line") ? issueNode.get("line").asInt() : 1,
+                    issueNode.has("column") ? issueNode.get("column").asInt() : 1));
           }
         }
 
@@ -546,6 +546,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /**
    * Ensure ESLint configuration file exists in the node directory.
+   *
    * @return Path to the ESLint config file
    */
   private Path _ensureEslintConfig() {
@@ -577,25 +578,26 @@ public class NodeJsServer implements AutoCloseable {
 
           // Create a basic .eslintrc.js if copying failed
           try {
-            String eslintConfig = "module.exports = {\n" +
-                    "  env: {\n" +
-                    "    browser: true,\n" +
-                    "    es2021: true,\n" +
-                    "    node: true,\n" +
-                    "  },\n" +
-                    "  extends: [\n" +
-                    "    'eslint:recommended'\n" +
-                    "  ],\n" +
-                    "  parserOptions: {\n" +
-                    "    ecmaFeatures: {\n" +
-                    "      jsx: true,\n" +
-                    "    },\n" +
-                    "    ecmaVersion: 'latest',\n" +
-                    "    sourceType: 'module',\n" +
-                    "  },\n" +
-                    "  plugins: [],\n" +
-                    "  rules: {}\n" +
-                    "};\n";
+            String eslintConfig =
+                "module.exports = {\n"
+                    + "  env: {\n"
+                    + "    browser: true,\n"
+                    + "    es2021: true,\n"
+                    + "    node: true,\n"
+                    + "  },\n"
+                    + "  extends: [\n"
+                    + "    'eslint:recommended'\n"
+                    + "  ],\n"
+                    + "  parserOptions: {\n"
+                    + "    ecmaFeatures: {\n"
+                    + "      jsx: true,\n"
+                    + "    },\n"
+                    + "    ecmaVersion: 'latest',\n"
+                    + "    sourceType: 'module',\n"
+                    + "  },\n"
+                    + "  plugins: [],\n"
+                    + "  rules: {}\n"
+                    + "};\n";
             Files.writeString(eslintConfigPath, eslintConfig);
             logger.info("Created basic .eslintrc.js in node directory");
           } catch (IOException ex) {
@@ -606,25 +608,26 @@ public class NodeJsServer implements AutoCloseable {
       } else {
         // No existing config, create a basic one
         try {
-          String eslintConfig = "module.exports = {\n" +
-                  "  env: {\n" +
-                  "    browser: true,\n" +
-                  "    es2021: true,\n" +
-                  "    node: true,\n" +
-                  "  },\n" +
-                  "  extends: [\n" +
-                  "    'eslint:recommended'\n" +
-                  "  ],\n" +
-                  "  parserOptions: {\n" +
-                  "    ecmaFeatures: {\n" +
-                  "      jsx: true,\n" +
-                  "    },\n" +
-                  "    ecmaVersion: 'latest',\n" +
-                  "    sourceType: 'module',\n" +
-                  "  },\n" +
-                  "  plugins: [],\n" +
-                  "  rules: {}\n" +
-                  "};\n";
+          String eslintConfig =
+              "module.exports = {\n"
+                  + "  env: {\n"
+                  + "    browser: true,\n"
+                  + "    es2021: true,\n"
+                  + "    node: true,\n"
+                  + "  },\n"
+                  + "  extends: [\n"
+                  + "    'eslint:recommended'\n"
+                  + "  ],\n"
+                  + "  parserOptions: {\n"
+                  + "    ecmaFeatures: {\n"
+                  + "      jsx: true,\n"
+                  + "    },\n"
+                  + "    ecmaVersion: 'latest',\n"
+                  + "    sourceType: 'module',\n"
+                  + "  },\n"
+                  + "  plugins: [],\n"
+                  + "  rules: {}\n"
+                  + "};\n";
           Files.writeString(eslintConfigPath, eslintConfig);
           logger.info("Created basic .eslintrc.js in node directory");
         } catch (IOException e) {

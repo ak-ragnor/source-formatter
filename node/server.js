@@ -25,15 +25,19 @@ app.get('/health', (req, res) => {
 // Global configuration storage
 let globalConfig = {
   prettier: {
-    printWidth: 80,
-    tabWidth: 2,
-    useTabs: false,
+    $schema: 'http://json.schemastore.org/prettierrc',
+    arrowParens: 'avoid',
+    bracketSpacing: false,
+    jsxBracketSameLine: false,
+    jsxSingleQuote: false,
+    printWidth: 100,
+    proseWrap: 'always',
+    quoteProps: 'as-needed',
     semi: true,
     singleQuote: true,
+    tabWidth: 2,
     trailingComma: 'es5',
-    bracketSpacing: true,
-    jsxBracketSameLine: false,
-    arrowParens: 'avoid',
+    useTabs: false,
   },
   eslint: {
     rules: {},
@@ -131,14 +135,17 @@ app.post('/analyze', async (req, res) => {
 
     // Create a temporary file
     const timestamp = Date.now();
-    const tempFile = path.join(tempDir, `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`);
+    const tempFile = path.join(
+      tempDir,
+      `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`
+    );
     fs.writeFileSync(tempFile, code);
 
     // ESLint config options
     const eslintOptions = {
       fix: true, // Always enable auto-fixing
       extensions: ['.js', '.jsx', '.ts', '.tsx'],
-      resolvePluginsRelativeTo: __dirname // Use the server directory to resolve plugins
+      resolvePluginsRelativeTo: __dirname, // Use the server directory to resolve plugins
     };
 
     // If a specific config path is provided, use it
@@ -182,7 +189,7 @@ app.post('/analyze', async (req, res) => {
       res.json({
         success: true,
         issues,
-        fixedCode: fixedCode // Include the fixed code in the response
+        fixedCode: fixedCode, // Include the fixed code in the response
       });
     } catch (lintError) {
       // Clean up and return error
