@@ -12,7 +12,7 @@ module.exports = {
     'plugin:jsx-a11y/recommended',
     'plugin:security/recommended-legacy',
     'plugin:sonarjs/recommended-legacy',
-    'plugin:prettier/recommended' // This will enable eslint-plugin-prettier and eslint-config-prettier
+    'plugin:prettier/recommended'
   ],
   parser: '@babel/eslint-parser',
   parserOptions: {

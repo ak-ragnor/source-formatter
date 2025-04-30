@@ -2,7 +2,8 @@ const express = require('express');
 const { ESLint } = require('eslint');
 const path = require('path');
 const fs = require('fs');
-const LRUCache = require('lru-cache');
+// Fix for lru-cache v10.x
+const { LRUCache } = require('lru-cache');
 
 // Get port from command line or use default
 const port = process.argv[2] || 9567;
@@ -361,9 +362,19 @@ app.post('/analyze', async (req, res) => {
   }
 });
 
-// Start server
+// Try to start server with port handling
+console.log(`Attempting to start server on port ${port}...`);
 const server = app.listen(port, () => {
   console.log(`Server listening on port ${port} with ESLint+Prettier integration`);
+});
+
+// Handle server startup errors
+server.on('error', (error) => {
+  console.error('Server startup error:', error.message);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${port} is already in use. Try another port.`);
+  }
+  process.exit(1);
 });
 
 // Handle graceful shutdown

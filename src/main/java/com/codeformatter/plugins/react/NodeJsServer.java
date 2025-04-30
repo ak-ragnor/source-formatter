@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -35,10 +36,13 @@ import java.util.logging.Logger;
  */
 public class NodeJsServer implements AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(NodeJsServer.class);
-  private static final int SERVER_PORT = 9567;
+  private static final int DEFAULT_SERVER_PORT = 9567;
   private static final int SERVER_START_TIMEOUT_SEC = 60; // Increased timeout
-  private static final String SERVER_URL = "http://localhost:" + SERVER_PORT;
-  private static final ObjectMapper objectMapper = new ObjectMapper();
+  private static final int CONNECTION_TIMEOUT_MS = 10000;
+  private static final int READ_TIMEOUT_MS = 60000;
+
+  // Try multiple ports if the default one is busy
+  private static final int[] PORT_ALTERNATIVES = {9568, 9569, 9570, 9571, 9572, 9573, 9574, 9575};
 
   // Add singleton pattern to prevent multiple server instances
   private static NodeJsServer instance;
@@ -49,7 +53,9 @@ public class NodeJsServer implements AutoCloseable {
   private boolean nodeJsAvailable = false;
   private String lastError = null;
   private Path serverScriptPath = null;
+  private int serverPort = DEFAULT_SERVER_PORT;
   private final List<String> serverLogs = new ArrayList<>();
+  private final AtomicBoolean serverStarting = new AtomicBoolean(false);
 
   // Required npm packages
   private static final String[] REQUIRED_PACKAGES = {
@@ -106,87 +112,187 @@ public class NodeJsServer implements AutoCloseable {
     }
   }
 
+  /**
+   * Find an available port to run the server on.
+   * @return An available port number or -1 if no ports are available
+   */
+  private int findAvailablePort() {
+    // First try the default port
+    if (isPortAvailable(DEFAULT_SERVER_PORT)) {
+      return DEFAULT_SERVER_PORT;
+    }
+
+    // Try alternative ports
+    for (int port : PORT_ALTERNATIVES) {
+      if (isPortAvailable(port)) {
+        return port;
+      }
+    }
+
+    return -1; // No available ports
+  }
+
+  /**
+   * Check if a port is available.
+   * @param port The port to check
+   * @return true if the port is available, false otherwise
+   */
+  private boolean isPortAvailable(int port) {
+    try {
+      // Try to create a server socket on the port
+      java.net.ServerSocket serverSocket = new java.net.ServerSocket(port);
+      serverSocket.close();
+      return true;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
   /** Start the Node.js server. */
   public boolean startServer() throws IOException {
-    if (serverRunning && serverProcess != null && serverProcess.isAlive()) {
-      return true;
+    // Use atomic boolean to prevent concurrent startup attempts
+    if (!serverStarting.compareAndSet(false, true)) {
+      logger.fine("Server startup already in progress, waiting...");
+
+      // Wait for the current startup attempt to complete
+      long startTime = System.currentTimeMillis();
+      while (serverStarting.get() &&
+              System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+        try {
+          Thread.sleep(500);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return false;
+        }
+      }
+
+      // If server is running after waiting, return success
+      if (serverRunning && serverProcess != null && serverProcess.isAlive()) {
+        return true;
+      }
+
+      // If we timed out waiting for the other startup, reset the flag and continue
+      serverStarting.set(false);
     }
-
-    // Reset server logs
-    serverLogs.clear();
-
-    // Check if Node.js is available first
-    if (!isNodeJsAvailable()) {
-      return false;
-    }
-
-    logger.info("Starting Node.js server with ESLint+Prettier integration...");
-
-    // Find path to the server script
-    serverScriptPath = findServerScript();
-    if (serverScriptPath == null) {
-      lastError = "Could not find server.js script";
-      return false;
-    }
-
-    // Check and install required npm packages before starting the server
-    ensureRequiredPackages();
-
-    List<String> command = new ArrayList<>();
-    command.add("node");
-    command.add(serverScriptPath.toString());
-    command.add(String.valueOf(SERVER_PORT));
-
-    ProcessBuilder pb = new ProcessBuilder(command);
-    pb.redirectErrorStream(true);
 
     try {
-      serverProcess = pb.start();
-    } catch (IOException e) {
-      logger.log(Level.WARNING, "Failed to start Node.js server: " + e.getMessage(), e);
-      lastError = "Failed to start Node.js server: " + e.getMessage();
-      return false;
-    }
+      if (serverRunning && serverProcess != null && serverProcess.isAlive()) {
+        serverStarting.set(false);
+        return true;
+      }
 
-    // Start a thread to consume and log the process output
-    new Thread(
-            () -> {
-              try (BufferedReader reader =
-                           new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                  // Store the log for diagnostic purposes
-                  synchronized (serverLogs) {
-                    serverLogs.add(line);
-                    if (serverLogs.size() > 100) {
-                      serverLogs.remove(0);
+      // Reset server logs
+      serverLogs.clear();
+
+      // Check if Node.js is available first
+      if (!isNodeJsAvailable()) {
+        serverStarting.set(false);
+        return false;
+      }
+
+      logger.info("Starting Node.js server with ESLint+Prettier integration...");
+
+      // Find path to the server script
+      serverScriptPath = findServerScript();
+      if (serverScriptPath == null) {
+        lastError = "Could not find server.js script";
+        serverStarting.set(false);
+        return false;
+      }
+
+      // Check and install required npm packages before starting the server
+      ensureRequiredPackages();
+
+      // Find an available port
+      serverPort = findAvailablePort();
+      if (serverPort == -1) {
+        lastError = "No available ports found for Node.js server";
+        logger.warning(lastError);
+        serverStarting.set(false);
+        return false;
+      }
+
+      logger.info("Using port " + serverPort + " for Node.js server");
+
+      List<String> command = new ArrayList<>();
+      command.add("node");
+      command.add(serverScriptPath.toString());
+      command.add(String.valueOf(serverPort));
+
+      ProcessBuilder pb = new ProcessBuilder(command);
+      pb.redirectErrorStream(true);
+
+      try {
+        serverProcess = pb.start();
+      } catch (IOException e) {
+        logger.log(Level.WARNING, "Failed to start Node.js server: " + e.getMessage(), e);
+        lastError = "Failed to start Node.js server: " + e.getMessage();
+        serverStarting.set(false);
+        return false;
+      }
+
+      // Start a thread to consume and log the process output
+      new Thread(
+              () -> {
+                try (BufferedReader reader =
+                             new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
+                  String line;
+                  while ((line = reader.readLine()) != null) {
+                    // Store the log for diagnostic purposes
+                    synchronized (serverLogs) {
+                      serverLogs.add(line);
+                      if (serverLogs.size() > 100) {
+                        serverLogs.remove(0);
+                      }
+                    }
+
+                    logger.fine("NodeJsServer: " + line);
+                    if (line.contains("Server listening on port")) {
+                      serverRunning = true;
                     }
                   }
-
-                  logger.fine("NodeJsServer: " + line);
-                  if (line.contains("Server listening on port")) {
-                    serverRunning = true;
-                  }
+                } catch (IOException e) {
+                  logger.log(Level.WARNING, "Error reading from Node.js server", e);
                 }
-              } catch (IOException e) {
-                logger.log(Level.WARNING, "Error reading from Node.js server", e);
-              }
-            })
-            .start();
+              },
+              "NodeJsServer-OutputReader")
+              .start();
 
-    // Wait for server to start
+      // Wait for server to start with improved health checking
+      boolean serverConfirmed = waitForServerStartup();
+
+      if (!serverConfirmed) {
+        stopServer(); // Clean up failed server process
+        serverStarting.set(false);
+        return false;
+      }
+
+      logger.info("Node.js server started successfully");
+      serverStarting.set(false);
+      return true;
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Unexpected error starting Node.js server", e);
+      lastError = "Unexpected error starting Node.js server: " + e.getMessage();
+      stopServer(); // Clean up failed server process
+      serverStarting.set(false);
+      return false;
+    }
+  }
+
+  /**
+   * Wait for the server to start and become responsive
+   * @return true if server started successfully, false otherwise
+   */
+  private boolean waitForServerStartup() {
     long startTime = System.currentTimeMillis();
+    int consecutiveSuccessfulChecks = 0;
     int retryCount = 0;
-    while (!serverRunning
-            && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+
+    // Wait for server to report it's listening
+    while (!serverRunning &&
+            System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
       try {
         TimeUnit.MILLISECONDS.sleep(500);
-
-        // Try to ping the server
-        if (isServerHealthy()) {
-          serverRunning = true;
-          break;
-        }
 
         // Check if process is still alive
         if (!serverProcess.isAlive()) {
@@ -205,7 +311,6 @@ public class NodeJsServer implements AutoCloseable {
           return false;
         }
 
-        // Retry with increasing delay
         retryCount++;
         if (retryCount % 10 == 0) {
           logger.info("Still waiting for server to start... " + (retryCount / 2) + " seconds elapsed");
@@ -214,11 +319,11 @@ public class NodeJsServer implements AutoCloseable {
         Thread.currentThread().interrupt();
         logger.log(Level.WARNING, "Interrupted while waiting for server to start", e);
         lastError = "Interrupted while waiting for server to start";
-        stopServer();
         return false;
       }
     }
 
+    // If we reached timeout without the server reporting as running
     if (!serverRunning) {
       synchronized (serverLogs) {
         logger.warning("Server logs:");
@@ -227,12 +332,39 @@ public class NodeJsServer implements AutoCloseable {
         }
       }
 
-      stopServer();
       lastError = "Failed to start Node.js server within timeout";
       return false;
     }
 
-    logger.info("Node.js server started successfully");
+    // Once the server reports running, verify it's actually responding to requests
+    // This requires multiple successful checks to ensure stability
+    startTime = System.currentTimeMillis();
+    while (consecutiveSuccessfulChecks < 3 &&
+            System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+      try {
+        TimeUnit.MILLISECONDS.sleep(1000);
+
+        if (isServerHealthy()) {
+          consecutiveSuccessfulChecks++;
+          logger.fine("Successful health check: " + consecutiveSuccessfulChecks + "/3");
+        } else {
+          consecutiveSuccessfulChecks = 0;
+          logger.fine("Server health check failed, retrying...");
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        logger.warning("Interrupted during server health verification");
+        lastError = "Interrupted during server health verification";
+        return false;
+      }
+    }
+
+    if (consecutiveSuccessfulChecks < 3) {
+      lastError = "Server started but failed health verification";
+      logger.warning(lastError);
+      return false;
+    }
+
     return true;
   }
 
@@ -260,20 +392,33 @@ public class NodeJsServer implements AutoCloseable {
                         + "  \"version\": \"1.0.0\",\n"
                         + "  \"private\": true,\n"
                         + "  \"dependencies\": {\n"
-                        + "    \"@babel/core\": \"^7.22.9\",\n"
-                        + "    \"@babel/eslint-parser\": \"^7.22.9\",\n"
-                        + "    \"@babel/preset-react\": \"^7.22.5\",\n"
-                        + "    \"eslint\": \"^8.46.0\",\n"
+                        + "    \"@babel/core\": \"^7.24.0\",\n"
+                        + "    \"@babel/eslint-parser\": \"^7.23.10\",\n"
+                        + "    \"@babel/preset-react\": \"^7.23.3\",\n"
+                        + "    \"@eslint/config-array\": \"^1.0.2\",\n"
+                        + "    \"@eslint/object-schema\": \"^1.0.1\",\n"
+                        + "    \"eslint\": \"^8.57.0\",\n"
                         + "    \"eslint-config-airbnb\": \"^19.0.4\",\n"
-                        + "    \"eslint-config-prettier\": \"^8.10.0\",\n"
+                        + "    \"eslint-config-prettier\": \"^9.1.0\",\n"
                         + "    \"eslint-plugin-import\": \"^2.29.1\",\n"
                         + "    \"eslint-plugin-jsx-a11y\": \"^6.8.0\",\n"
-                        + "    \"eslint-plugin-prettier\": \"^5.0.0\",\n"
+                        + "    \"eslint-plugin-prettier\": \"^5.1.3\",\n"
                         + "    \"eslint-plugin-react\": \"^7.33.2\",\n"
                         + "    \"eslint-plugin-react-hooks\": \"^4.6.0\",\n"
-                        + "    \"express\": \"^4.18.2\",\n"
-                        + "    \"lru-cache\": \"^10.0.1\",\n"
-                        + "    \"prettier\": \"^3.0.0\"\n"
+                        + "    \"eslint-plugin-security\": \"^4.0.0\",\n"
+                        + "    \"eslint-plugin-sonarjs\": \"^3.0.2\",\n"
+                        + "    \"express\": \"^4.18.3\",\n"
+                        + "    \"glob\": \"^10.3.10\",\n"
+                        + "    \"lru-cache\": \"^10.2.0\",\n"
+                        + "    \"prettier\": \"^3.2.5\",\n"
+                        + "    \"rimraf\": \"^5.0.5\"\n"
+                        + "  },\n"
+                        + "  \"scripts\": {\n"
+                        + "    \"start-server\": \"node server.js\",\n"
+                        + "    \"test\": \"echo \\\"No tests configured\\\"\"\n"
+                        + "  },\n"
+                        + "  \"engines\": {\n"
+                        + "    \"node\": \">=18.0.0\"\n"
                         + "  }\n"
                         + "}";
         Files.writeString(packageJsonPath, packageJsonContent);
@@ -430,12 +575,13 @@ public class NodeJsServer implements AutoCloseable {
 
   /** Check if the server is healthy by pinging the /health endpoint */
   private boolean isServerHealthy() {
+    HttpURLConnection conn = null;
     try {
-      URL url = new URI(SERVER_URL + "/health").toURL();
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+      URL url = new URI(getServerUrl() + "/health").toURL();
+      conn = (HttpURLConnection) url.openConnection();
       conn.setRequestMethod("GET");
-      conn.setConnectTimeout(1000);
-      conn.setReadTimeout(1000);
+      conn.setConnectTimeout(CONNECTION_TIMEOUT_MS);
+      conn.setReadTimeout(READ_TIMEOUT_MS);
 
       int responseCode = conn.getResponseCode();
       if (responseCode == 200) {
@@ -454,9 +600,21 @@ public class NodeJsServer implements AutoCloseable {
       }
       return false;
     } catch (Exception e) {
-      // Expected during startup, don't log
+      logger.fine("Health check failed: " + e.getMessage());
       return false;
+    } finally {
+      if (conn != null) {
+        conn.disconnect();
+      }
     }
+  }
+
+  /**
+   * Get the full server URL.
+   * @return The server URL including protocol, host and port
+   */
+  private String getServerUrl() {
+    return "http://localhost:" + serverPort;
   }
 
   /**
@@ -471,15 +629,16 @@ public class NodeJsServer implements AutoCloseable {
       }
     }
 
+    HttpURLConnection conn = null;
     try {
-      URL url = new URI(SERVER_URL + endpoint).toURL();
-      HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+      URL url = new URI(getServerUrl() + endpoint).toURL();
+      conn = (HttpURLConnection) url.openConnection();
       conn.setRequestMethod("POST");
       conn.setRequestProperty("Content-Type", "application/json");
       conn.setRequestProperty("Accept", "application/json");
       conn.setDoOutput(true);
-      conn.setConnectTimeout(30000); // 30 seconds
-      conn.setReadTimeout(60000);    // 60 seconds
+      conn.setConnectTimeout(CONNECTION_TIMEOUT_MS);
+      conn.setReadTimeout(READ_TIMEOUT_MS);
 
       // Send request
       try (OutputStream os = conn.getOutputStream()) {
@@ -517,6 +676,10 @@ public class NodeJsServer implements AutoCloseable {
       return response.toString();
     } catch (URISyntaxException e) {
       throw new IOException("Error creating URI for endpoint: " + e.getMessage(), e);
+    } finally {
+      if (conn != null) {
+        conn.disconnect();
+      }
     }
   }
 
@@ -576,6 +739,16 @@ public class NodeJsServer implements AutoCloseable {
     }
   }
 
+  // Lazy-initialized JSON mapper
+  private ObjectMapper objectMapper;
+
+  private ObjectMapper getObjectMapper() {
+    if (objectMapper == null) {
+      objectMapper = new ObjectMapper();
+    }
+    return objectMapper;
+  }
+
   /** Configure the formatter with specific options. */
   public boolean configure(Map<String, Object> options) {
     if (!serverRunning) {
@@ -592,10 +765,10 @@ public class NodeJsServer implements AutoCloseable {
     }
 
     try {
-      String requestJson = objectMapper.writeValueAsString(options);
+      String requestJson = getObjectMapper().writeValueAsString(options);
       String responseJson = callEndpoint("/configure", requestJson);
 
-      JsonNode responseNode = objectMapper.readTree(responseJson);
+      JsonNode responseNode = getObjectMapper().readTree(responseJson);
       return responseNode.has("success") && responseNode.get("success").asBoolean();
     } catch (Exception e) {
       logger.log(Level.WARNING, "Error configuring Node.js server: " + e.getMessage(), e);
@@ -625,7 +798,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /** Check if the server is running. */
   public boolean isRunning() {
-    return serverRunning && serverProcess != null && serverProcess.isAlive();
+    return serverRunning && serverProcess != null && serverProcess.isAlive() && isServerHealthy();
   }
 
   /** Get the last error message if any. */
