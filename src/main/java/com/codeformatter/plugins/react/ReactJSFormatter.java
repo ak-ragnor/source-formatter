@@ -10,7 +10,6 @@ import com.codeformatter.util.LoggerUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.IOException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -26,9 +25,8 @@ import java.util.logging.Logger;
 /**
  * React JS formatter plugin using ESLint with Prettier plugin.
  *
- * <p>This implementation uses a single NodeJsServer endpoint for both
- * formatting and analysis, leveraging ESLint's built-in suggestions
- * for more accurate and helpful guidance to users.</p>
+ * <p>This implementation uses a single NodeJsServer endpoint for both formatting and analysis,
+ * leveraging ESLint's built-in suggestions for more accurate and helpful guidance to users.
  */
 public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(ReactJSFormatter.class);
@@ -108,7 +106,8 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     }
 
     // Set up rules for React hooks if enabled
-    boolean enforceHookDependencies = (boolean) reactConfig.getOrDefault("enforceHookDependencies", true);
+    boolean enforceHookDependencies =
+        (boolean) reactConfig.getOrDefault("enforceHookDependencies", true);
     if (enforceHookDependencies) {
       eslintRules.put("react-hooks/exhaustive-deps", "warn");
     } else {
@@ -130,18 +129,18 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     // If formatter is disabled, return a special result explaining why
     if (disabled) {
       FormatterError error =
-              new FormatterError(
-                      Severity.WARNING,
-                      "ReactJS formatter is disabled: " + disabledReason,
-                      1,
-                      1,
-                      "Install Node.js and required npm packages (eslint, eslint-plugin-prettier, eslint-plugin-react, eslint-plugin-react-hooks)");
+          new FormatterError(
+              Severity.WARNING,
+              "ReactJS formatter is disabled: " + disabledReason,
+              1,
+              1,
+              "Install Node.js and required npm packages (eslint, eslint-plugin-prettier, eslint-plugin-react, eslint-plugin-react-hooks)");
 
       return FormatterResult.builder()
-              .successful(false)
-              .formattedCode(sourceCode) // Return original code unformatted
-              .addError(error)
-              .build();
+          .successful(false)
+          .formattedCode(sourceCode) // Return original code unformatted
+          .addError(error)
+          .build();
     }
 
     String contentHash = _calculateHash(sourceCode);
@@ -179,8 +178,10 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
             Severity severity = Severity.INFO;
             if (issue.has("severity")) {
               String severityStr = issue.get("severity").asText();
-              severity = "error".equals(severityStr) ? Severity.ERROR :
-                      "warning".equals(severityStr) ? Severity.WARNING : Severity.INFO;
+              severity =
+                  "error".equals(severityStr)
+                      ? Severity.ERROR
+                      : "warning".equals(severityStr) ? Severity.WARNING : Severity.INFO;
             }
 
             String message = issue.has("message") ? issue.get("message").asText() : "";
@@ -188,8 +189,10 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
             int column = issue.has("column") ? issue.get("column").asInt() : 1;
 
             // Use ESLint's built-in suggestion if available
-            String suggestion = issue.has("suggestion") && !issue.get("suggestion").isNull() ?
-                    issue.get("suggestion").asText() : null;
+            String suggestion =
+                issue.has("suggestion") && !issue.get("suggestion").isNull()
+                    ? issue.get("suggestion").asText()
+                    : null;
 
             // Track if the issue is fixable
             boolean fixable = issue.has("fixable") && issue.get("fixable").asBoolean();
@@ -207,31 +210,33 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
           // Add fixable issues count to refactorings if any were found
           if (fixableIssueCount > 0) {
             refactorings.add(
-                    new Refactoring(
-                            "AUTO_FIXABLE",
-                            1,
-                            1,
-                            fixableIssueCount + " issues can be automatically fixed by ESLint"));
+                new Refactoring(
+                    "AUTO_FIXABLE",
+                    1,
+                    1,
+                    fixableIssueCount + " issues can be automatically fixed by ESLint"));
           }
         }
 
         // If formatting changed the code, add a refactoring
         if (!formattedCode.equals(sourceCode)) {
           refactorings.add(
-                  new Refactoring(
-                          "FORMATTING",
-                          1,
-                          countLines(sourceCode),
-                          "Applied " + (isReact ? "React" : "JavaScript") + " formatting with ESLint+Prettier"));
+              new Refactoring(
+                  "FORMATTING",
+                  1,
+                  countLines(sourceCode),
+                  "Applied "
+                      + (isReact ? "React" : "JavaScript")
+                      + " formatting with ESLint+Prettier"));
         }
       } else if (result.has("error")) {
         errors.add(
-                new FormatterError(
-                        Severity.WARNING,
-                        "Error processing with ESLint+Prettier: " + result.get("error").asText(),
-                        1,
-                        1,
-                        "Check that all required npm packages are installed correctly"));
+            new FormatterError(
+                Severity.WARNING,
+                "Error processing with ESLint+Prettier: " + result.get("error").asText(),
+                1,
+                1,
+                "Check that all required npm packages are installed correctly"));
 
         // Use original code if formatting failed
         formattedCode = sourceCode;
@@ -240,28 +245,30 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
       logger.log(Level.WARNING, "Error processing " + filePath + ": " + e.getMessage(), e);
 
       errors.add(
-              new FormatterError(
-                      Severity.WARNING,
-                      "Error processing with Node.js: " + e.getMessage(),
-                      1,
-                      1,
-                      "Make sure Node.js is installed and required npm packages are available: eslint, eslint-plugin-prettier, eslint-plugin-react"));
+          new FormatterError(
+              Severity.WARNING,
+              "Error processing with Node.js: " + e.getMessage(),
+              1,
+              1,
+              "Make sure Node.js is installed and required npm packages are available: eslint, eslint-plugin-prettier, eslint-plugin-react"));
 
       // Use original code if formatting failed
       formattedCode = sourceCode;
     }
 
     // Determine if formatting was successful
-    // Format is successful if there are no FATAL errors, even if there are regular errors or warnings
-    boolean successful = processingSucceeded && errors.stream().noneMatch(e -> e.getSeverity() == Severity.FATAL);
+    // Format is successful if there are no FATAL errors, even if there are regular errors or
+    // warnings
+    boolean successful =
+        processingSucceeded && errors.stream().noneMatch(e -> e.getSeverity() == Severity.FATAL);
 
     FormatterResult result =
-            FormatterResult.builder()
-                    .successful(successful)
-                    .formattedCode(formattedCode)
-                    .errors(errors)
-                    .appliedRefactorings(refactorings)
-                    .build();
+        FormatterResult.builder()
+            .successful(successful)
+            .formattedCode(formattedCode)
+            .errors(errors)
+            .appliedRefactorings(refactorings)
+            .build();
 
     // Cache the result
     resultCache.put(contentHash, result);
@@ -269,16 +276,16 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
     return result;
   }
 
-  /**
-   * Format and analyze code in a single operation using the new combined endpoint.
-   */
-  private JsonNode formatAndAnalyze(String sourceCode, boolean isReact, String cacheKey) throws IOException {
+  /** Format and analyze code in a single operation using the new combined endpoint. */
+  private JsonNode formatAndAnalyze(String sourceCode, boolean isReact, String cacheKey)
+      throws IOException {
     ObjectNode requestBody = objectMapper.createObjectNode();
     requestBody.put("code", sourceCode);
     requestBody.put("isReact", isReact);
     requestBody.put("cacheKey", cacheKey);
 
-    String responseJson = server.callEndpoint("/format-and-analyze", objectMapper.writeValueAsString(requestBody));
+    String responseJson =
+        server.callEndpoint("/format-and-analyze", objectMapper.writeValueAsString(requestBody));
     return objectMapper.readTree(responseJson);
   }
 
@@ -330,15 +337,15 @@ public class ReactJSFormatter implements FormatterPlugin, AutoCloseable {
   /** Check if code contains React patterns. */
   private boolean containsReactCode(String sourceCode) {
     return sourceCode.contains("import React")
-            || sourceCode.contains("from 'react'")
-            || sourceCode.contains("from \"react\"")
-            || sourceCode.contains("React.")
-            || (sourceCode.contains("<") && sourceCode.contains("/>"))
-            || sourceCode.contains("useState(")
-            || sourceCode.contains("useEffect(")
-            || sourceCode.contains("useRef(")
-            || sourceCode.contains("useCallback(")
-            || sourceCode.contains("extends Component");
+        || sourceCode.contains("from 'react'")
+        || sourceCode.contains("from \"react\"")
+        || sourceCode.contains("React.")
+        || (sourceCode.contains("<") && sourceCode.contains("/>"))
+        || sourceCode.contains("useState(")
+        || sourceCode.contains("useEffect(")
+        || sourceCode.contains("useRef(")
+        || sourceCode.contains("useCallback(")
+        || sourceCode.contains("extends Component");
   }
 
   /** Clear the formatter's cache. */

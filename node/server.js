@@ -29,7 +29,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     version: '1.0.0',
-    mode: 'eslint-with-prettier'
+    mode: 'eslint-with-prettier',
   });
 });
 
@@ -38,17 +38,20 @@ let globalConfig = {
   eslint: {
     rules: {
       // Default rules when none are provided
-      'prettier/prettier': ['error', {
-        printWidth: 100,
-        tabWidth: 2,
-        useTabs: false,
-        semi: true,
-        singleQuote: true,
-        trailingComma: 'es5',
-        bracketSpacing: true,
-        jsxBracketSameLine: false,
-        arrowParens: 'avoid',
-      }]
+      'prettier/prettier': [
+        'error',
+        {
+          printWidth: 100,
+          tabWidth: 2,
+          useTabs: false,
+          semi: true,
+          singleQuote: true,
+          trailingComma: 'es5',
+          bracketSpacing: true,
+          jsxBracketSameLine: false,
+          arrowParens: 'avoid',
+        },
+      ],
     },
   },
 };
@@ -73,7 +76,7 @@ app.post('/configure', (req, res) => {
     if (config.prettier) {
       globalConfig.eslint.rules = {
         ...globalConfig.eslint.rules,
-        'prettier/prettier': ['error', config.prettier]
+        'prettier/prettier': ['error', config.prettier],
       };
     }
 
@@ -96,8 +99,8 @@ async function processWithESLint(code, isReact) {
   // Create a temporary file with the correct extension
   const timestamp = Date.now();
   const tempFile = path.join(
-      tempDir,
-      `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`
+    tempDir,
+    `temp-${timestamp}.${isReact ? 'jsx' : 'js'}`
   );
   fs.writeFileSync(tempFile, code);
 
@@ -118,17 +121,17 @@ async function processWithESLint(code, isReact) {
           },
           requireConfigFile: false,
           babelOptions: {
-            presets: ['@babel/preset-react']
-          }
+            presets: ['@babel/preset-react'],
+          },
         },
         plugins: ['prettier', 'react', 'react-hooks'],
         extends: [
           'eslint:recommended',
           'plugin:react/recommended',
           'plugin:react-hooks/recommended',
-          'prettier'
+          'prettier',
         ],
-      }
+      },
     };
 
     // Look for .eslintrc.js in the current directory
@@ -167,12 +170,17 @@ async function processWithESLint(code, isReact) {
       }
       // Some rules provide direct suggestions
       else if (msg.suggestions && msg.suggestions.length > 0) {
-        suggestion = msg.suggestions[0].desc ||
-            `Suggested fix: ${msg.suggestions[0].messageId || 'Apply ESLint suggestion'}`;
+        suggestion =
+          msg.suggestions[0].desc ||
+          `Suggested fix: ${msg.suggestions[0].messageId || 'Apply ESLint suggestion'}`;
       }
       // For common rules, extract from the message or use common patterns
       else {
-        suggestion = extractSuggestionFromMessage(msg.ruleId, msg.message, isReact);
+        suggestion = extractSuggestionFromMessage(
+          msg.ruleId,
+          msg.message,
+          isReact
+        );
       }
 
       return {
@@ -181,8 +189,8 @@ async function processWithESLint(code, isReact) {
         message: msg.message,
         line: msg.line || 1,
         column: msg.column || 1,
-        suggestion: suggestion,
-        fixable: msg.fix !== undefined || (msg.suggestions && msg.suggestions.length > 0)
+        suggestion,
+        fixable: msg.fix !== undefined || (msg.suggestions && msg.suggestions.length > 0),
       };
     });
 
@@ -197,7 +205,7 @@ async function processWithESLint(code, isReact) {
       success: true,
       formattedCode,
       issues,
-      fixableIssueCount: issues.filter(issue => issue.fixable).length
+      fixableIssueCount: issues.filter(issue => issue.fixable).length,
     };
   } catch (error) {
     // Clean up and re-throw
@@ -261,20 +269,24 @@ function extractSuggestionFromMessage(ruleId, message, isReact) {
 
   if (message.includes('Replace') && message.includes('with')) {
     // Extract replacement suggestion directly from message
-    const match = message.match(/Replace\s+['"`](.*?)['"`]\s+with\s+['"`](.*?)['"`]/);
+    const match = message.match(
+      /Replace\s+['"`](.*?)['"`]\s+with\s+['"`](.*?)['"`]/
+    );
     if (match) {
       return `Replace '${match[1]}' with '${match[2]}'.`;
     }
   }
 
   if (message.includes('is missing in props validation')) {
-    return 'Add this prop to the component\'s PropTypes definition.';
+    return "Add this prop to the component's PropTypes definition.";
   }
 
   // React Hook rules
   if (ruleId === 'react-hooks/exhaustive-deps') {
     // Extract missing dependencies
-    const depMatch = message.match(/React Hook \w+ has (?:a )?missing dependenc(?:y|ies): ['"](.+?)['"]/);
+    const depMatch = message.match(
+      /React Hook \w+ has (?:a )?missing dependenc(?:y|ies): ['"](.+?)['"]/
+    );
     if (depMatch) {
       return `Add ${depMatch[1]} to the dependency array. When this value changes, your effect should re-run.`;
     }
@@ -296,7 +308,7 @@ function extractSuggestionFromMessage(ruleId, message, isReact) {
   }
 
   if (ruleId.startsWith('import/')) {
-    return 'Fix this import statement according to the project\'s import organization rules.';
+    return "Fix this import statement according to the project's import organization rules.";
   }
 
   // No specific suggestion available
@@ -322,7 +334,7 @@ app.post('/format', async (req, res) => {
     // Return only the formatting result
     res.json({
       success: true,
-      formattedCode: result.formattedCode
+      formattedCode: result.formattedCode,
     });
   } catch (error) {
     console.error('Format endpoint error:', error);
@@ -351,7 +363,7 @@ app.post('/analyze', async (req, res) => {
     // Return only the analysis results
     res.json({
       success: true,
-      issues: result.issues
+      issues: result.issues,
     });
   } catch (error) {
     console.error('Analyze endpoint error:', error);
@@ -369,7 +381,7 @@ const server = app.listen(port, () => {
 });
 
 // Handle server startup errors
-server.on('error', (error) => {
+server.on('error', error => {
   console.error('Server startup error:', error.message);
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${port} is already in use. Try another port.`);

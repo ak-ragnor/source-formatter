@@ -1,4 +1,4 @@
-# Default Advanced Code Formatter Configuration
+# Advanced Code Formatter Configuration with Hybrid Architecture
 
 general:
   indentSize: 4
@@ -14,18 +14,48 @@ general:
 
 plugins:
   spring:
+    # Method and complexity limits (used by PMD and custom analyzers)
     maxMethodLines: 50
     maxMethodComplexity: 15
+
+    # Design pattern enforcement
     enforceDesignPatterns: true
+
+    # Dependency injection style
     enforceDependencyInjection: constructor
+
+    # External tool configurations
+    checkstyle:
+      enabled: true
+      configFile: null  # Use default if null, or path to custom checkstyle.xml
+      severity: warning # error, warning, info
+
+    pmd:
+      enabled: true
+      ruleSet: "rulesets/java/quickstart.xml"  # PMD ruleset to use
+      severity: warning
+
+    # Enhanced import organization
     importOrganization:
+      organize: true
+      removeUnused: true
+      maxPerGroup: 20
       groups:
         - static
         - java
         - javax
+        - jakarta
         - org.springframework
+        - org.junit
+        - org.mockito
+        - org.apache
+        - org.slf4j
+        - com.fasterxml
+        - com.google
         - com
         - org
+        - net
+        - ""  # Project-specific imports (no prefix)
 
   react:
     maxComponentLines: 150
@@ -38,3 +68,15 @@ plugins:
         - external
         - internal
         - css
+
+# External tool installation paths (optional - tools will be auto-detected)
+externalTools:
+  checkstyle:
+  # Uncomment and set if Checkstyle is not in PATH
+  # commandPath: "/usr/local/bin/checkstyle"
+  # jarPath: "/path/to/checkstyle.jar"
+
+  pmd:
+  # Uncomment and set if PMD is not in PATH
+  # commandPath: "/usr/local/bin/pmd"
+  # homeDirectory: "/path/to/pmd"

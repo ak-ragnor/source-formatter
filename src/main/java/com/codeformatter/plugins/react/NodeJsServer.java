@@ -1,11 +1,9 @@
 package com.codeformatter.plugins.react;
 
 import com.codeformatter.util.LoggerUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import java.io.BufferedReader;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -31,8 +29,8 @@ import java.util.logging.Logger;
 /**
  * Manages a local Node.js server for JavaScript/React code processing using ESLint with Prettier.
  *
- * <p>This implementation includes improved resource handling, better error reporting,
- * and robust server startup detection.</p>
+ * <p>This implementation includes improved resource handling, better error reporting, and robust
+ * server startup detection.
  */
 public class NodeJsServer implements AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(NodeJsServer.class);
@@ -59,10 +57,16 @@ public class NodeJsServer implements AutoCloseable {
 
   // Required npm packages
   private static final String[] REQUIRED_PACKAGES = {
-          "express", "eslint", "eslint-plugin-prettier", "prettier",
-          "eslint-plugin-react", "eslint-plugin-react-hooks",
-          "@babel/core", "@babel/eslint-parser", "@babel/preset-react",
-          "lru-cache"
+    "express",
+    "eslint",
+    "eslint-plugin-prettier",
+    "prettier",
+    "eslint-plugin-react",
+    "eslint-plugin-react-hooks",
+    "@babel/core",
+    "@babel/eslint-parser",
+    "@babel/preset-react",
+    "lru-cache"
   };
 
   /** Get a singleton instance of NodeJsServer. */
@@ -94,7 +98,7 @@ public class NodeJsServer implements AutoCloseable {
       int exitCode = process.waitFor();
       if (exitCode == 0) {
         try (BufferedReader reader =
-                     new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
           String version = reader.readLine();
           logger.info("Node.js detected: " + version);
           nodeJsAvailable = true;
@@ -114,6 +118,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /**
    * Find an available port to run the server on.
+   *
    * @return An available port number or -1 if no ports are available
    */
   private int findAvailablePort() {
@@ -134,6 +139,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /**
    * Check if a port is available.
+   *
    * @param port The port to check
    * @return true if the port is available, false otherwise
    */
@@ -156,8 +162,8 @@ public class NodeJsServer implements AutoCloseable {
 
       // Wait for the current startup attempt to complete
       long startTime = System.currentTimeMillis();
-      while (serverStarting.get() &&
-              System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+      while (serverStarting.get()
+          && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
         try {
           Thread.sleep(500);
         } catch (InterruptedException e) {
@@ -235,7 +241,7 @@ public class NodeJsServer implements AutoCloseable {
       new Thread(
               () -> {
                 try (BufferedReader reader =
-                             new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
+                    new BufferedReader(new InputStreamReader(serverProcess.getInputStream()))) {
                   String line;
                   while ((line = reader.readLine()) != null) {
                     // Store the log for diagnostic purposes
@@ -256,7 +262,7 @@ public class NodeJsServer implements AutoCloseable {
                 }
               },
               "NodeJsServer-OutputReader")
-              .start();
+          .start();
 
       // Wait for server to start with improved health checking
       boolean serverConfirmed = waitForServerStartup();
@@ -281,6 +287,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /**
    * Wait for the server to start and become responsive
+   *
    * @return true if server started successfully, false otherwise
    */
   private boolean waitForServerStartup() {
@@ -289,8 +296,8 @@ public class NodeJsServer implements AutoCloseable {
     int retryCount = 0;
 
     // Wait for server to report it's listening
-    while (!serverRunning &&
-            System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+    while (!serverRunning
+        && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
       try {
         TimeUnit.MILLISECONDS.sleep(500);
 
@@ -313,7 +320,8 @@ public class NodeJsServer implements AutoCloseable {
 
         retryCount++;
         if (retryCount % 10 == 0) {
-          logger.info("Still waiting for server to start... " + (retryCount / 2) + " seconds elapsed");
+          logger.info(
+              "Still waiting for server to start... " + (retryCount / 2) + " seconds elapsed");
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -339,8 +347,8 @@ public class NodeJsServer implements AutoCloseable {
     // Once the server reports running, verify it's actually responding to requests
     // This requires multiple successful checks to ensure stability
     startTime = System.currentTimeMillis();
-    while (consecutiveSuccessfulChecks < 3 &&
-            System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
+    while (consecutiveSuccessfulChecks < 3
+        && System.currentTimeMillis() - startTime < SERVER_START_TIMEOUT_SEC * 1000) {
       try {
         TimeUnit.MILLISECONDS.sleep(1000);
 
@@ -387,40 +395,40 @@ public class NodeJsServer implements AutoCloseable {
       // Create a minimal package.json if it doesn't exist
       try {
         String packageJsonContent =
-                "{\n"
-                        + "  \"name\": \"advanced-formatter-js-tools\",\n"
-                        + "  \"version\": \"1.0.0\",\n"
-                        + "  \"private\": true,\n"
-                        + "  \"dependencies\": {\n"
-                        + "    \"@babel/core\": \"^7.24.0\",\n"
-                        + "    \"@babel/eslint-parser\": \"^7.23.10\",\n"
-                        + "    \"@babel/preset-react\": \"^7.23.3\",\n"
-                        + "    \"@eslint/config-array\": \"^1.0.2\",\n"
-                        + "    \"@eslint/object-schema\": \"^1.0.1\",\n"
-                        + "    \"eslint\": \"^8.57.0\",\n"
-                        + "    \"eslint-config-airbnb\": \"^19.0.4\",\n"
-                        + "    \"eslint-config-prettier\": \"^9.1.0\",\n"
-                        + "    \"eslint-plugin-import\": \"^2.29.1\",\n"
-                        + "    \"eslint-plugin-jsx-a11y\": \"^6.8.0\",\n"
-                        + "    \"eslint-plugin-prettier\": \"^5.1.3\",\n"
-                        + "    \"eslint-plugin-react\": \"^7.33.2\",\n"
-                        + "    \"eslint-plugin-react-hooks\": \"^4.6.0\",\n"
-                        + "    \"eslint-plugin-security\": \"^4.0.0\",\n"
-                        + "    \"eslint-plugin-sonarjs\": \"^3.0.2\",\n"
-                        + "    \"express\": \"^4.18.3\",\n"
-                        + "    \"glob\": \"^10.3.10\",\n"
-                        + "    \"lru-cache\": \"^10.2.0\",\n"
-                        + "    \"prettier\": \"^3.2.5\",\n"
-                        + "    \"rimraf\": \"^5.0.5\"\n"
-                        + "  },\n"
-                        + "  \"scripts\": {\n"
-                        + "    \"start-server\": \"node server.js\",\n"
-                        + "    \"test\": \"echo \\\"No tests configured\\\"\"\n"
-                        + "  },\n"
-                        + "  \"engines\": {\n"
-                        + "    \"node\": \">=18.0.0\"\n"
-                        + "  }\n"
-                        + "}";
+            "{\n"
+                + "  \"name\": \"advanced-formatter-js-tools\",\n"
+                + "  \"version\": \"1.0.0\",\n"
+                + "  \"private\": true,\n"
+                + "  \"dependencies\": {\n"
+                + "    \"@babel/core\": \"^7.24.0\",\n"
+                + "    \"@babel/eslint-parser\": \"^7.23.10\",\n"
+                + "    \"@babel/preset-react\": \"^7.23.3\",\n"
+                + "    \"@eslint/config-array\": \"^1.0.2\",\n"
+                + "    \"@eslint/object-schema\": \"^1.0.1\",\n"
+                + "    \"eslint\": \"^8.57.0\",\n"
+                + "    \"eslint-config-airbnb\": \"^19.0.4\",\n"
+                + "    \"eslint-config-prettier\": \"^9.1.0\",\n"
+                + "    \"eslint-plugin-import\": \"^2.29.1\",\n"
+                + "    \"eslint-plugin-jsx-a11y\": \"^6.8.0\",\n"
+                + "    \"eslint-plugin-prettier\": \"^5.1.3\",\n"
+                + "    \"eslint-plugin-react\": \"^7.33.2\",\n"
+                + "    \"eslint-plugin-react-hooks\": \"^4.6.0\",\n"
+                + "    \"eslint-plugin-security\": \"^4.0.0\",\n"
+                + "    \"eslint-plugin-sonarjs\": \"^3.0.2\",\n"
+                + "    \"express\": \"^4.18.3\",\n"
+                + "    \"glob\": \"^10.3.10\",\n"
+                + "    \"lru-cache\": \"^10.2.0\",\n"
+                + "    \"prettier\": \"^3.2.5\",\n"
+                + "    \"rimraf\": \"^5.0.5\"\n"
+                + "  },\n"
+                + "  \"scripts\": {\n"
+                + "    \"start-server\": \"node server.js\",\n"
+                + "    \"test\": \"echo \\\"No tests configured\\\"\"\n"
+                + "  },\n"
+                + "  \"engines\": {\n"
+                + "    \"node\": \">=18.0.0\"\n"
+                + "  }\n"
+                + "}";
         Files.writeString(packageJsonPath, packageJsonContent);
         logger.info("Created package.json at: " + packageJsonPath);
       } catch (IOException e) {
@@ -455,7 +463,7 @@ public class NodeJsServer implements AutoCloseable {
 
         // Log npm install output
         try (BufferedReader reader =
-                     new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            new BufferedReader(new InputStreamReader(process.getInputStream()))) {
           String line;
           while ((line = reader.readLine()) != null) {
             logger.fine("npm install: " + line);
@@ -496,12 +504,12 @@ public class NodeJsServer implements AutoCloseable {
 
     // Application directory structure locations
     possibleLocations.add(
-            Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
+        Paths.get(System.getProperty("user.dir"), "src", "main", "resources", "node", "server.js"));
     possibleLocations.add(
-            Paths.get(
-                    System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
+        Paths.get(
+            System.getProperty("user.dir"), "build", "resources", "main", "node", "server.js"));
     possibleLocations.add(
-            Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
+        Paths.get(System.getProperty("user.dir"), "resources", "node", "server.js"));
 
     // Log attempted locations
     logger.fine("Searching for server.js in locations: " + possibleLocations);
@@ -531,7 +539,7 @@ public class NodeJsServer implements AutoCloseable {
         // Extract to temp directory
         Path tempServerJs = nodeDir.resolve("server.js");
         try (InputStream in = serverJsResource.openStream();
-             OutputStream out = new FileOutputStream(tempServerJs.toFile())) {
+            OutputStream out = new FileOutputStream(tempServerJs.toFile())) {
           byte[] buffer = new byte[8192];
           int bytesRead;
           while ((bytesRead = in.read(buffer)) != -1) {
@@ -550,7 +558,7 @@ public class NodeJsServer implements AutoCloseable {
 
         // Try to find the resource
         InputStream serverJsStream =
-                getClass().getClassLoader().getResource("node/server.js").openStream();
+            getClass().getClassLoader().getResource("node/server.js").openStream();
         if (serverJsStream != null) {
           // Copy to user home
           try (OutputStream out = new FileOutputStream(userHomeNode.toFile())) {
@@ -586,7 +594,8 @@ public class NodeJsServer implements AutoCloseable {
       int responseCode = conn.getResponseCode();
       if (responseCode == 200) {
         // Read response to confirm it's our server
-        try (BufferedReader br = new BufferedReader(
+        try (BufferedReader br =
+            new BufferedReader(
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
           StringBuilder response = new StringBuilder();
           String line;
@@ -611,6 +620,7 @@ public class NodeJsServer implements AutoCloseable {
 
   /**
    * Get the full server URL.
+   *
    * @return The server URL including protocol, host and port
    */
   private String getServerUrl() {
@@ -618,8 +628,8 @@ public class NodeJsServer implements AutoCloseable {
   }
 
   /**
-   * Generic method to call any server endpoint.
-   * This consolidates HTTP communication logic for all endpoints.
+   * Generic method to call any server endpoint. This consolidates HTTP communication logic for all
+   * endpoints.
    */
   public String callEndpoint(String endpoint, String requestJson) throws IOException {
     if (!serverRunning) {
@@ -651,22 +661,22 @@ public class NodeJsServer implements AutoCloseable {
       if (responseCode != 200) {
         StringBuilder errorResponse = new StringBuilder();
         try (BufferedReader br =
-                     new BufferedReader(
-                             new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+            new BufferedReader(
+                new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
           String line;
           while ((line = br.readLine()) != null) {
             errorResponse.append(line);
           }
         }
         throw new IOException(
-                "Server returned error code " + responseCode + ": " + errorResponse.toString());
+            "Server returned error code " + responseCode + ": " + errorResponse.toString());
       }
 
       // Read successful response
       StringBuilder response = new StringBuilder();
       try (BufferedReader br =
-                   new BufferedReader(
-                           new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+          new BufferedReader(
+              new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
         String line;
         while ((line = br.readLine()) != null) {
           response.append(line);
@@ -712,7 +722,9 @@ public class NodeJsServer implements AutoCloseable {
 
     List<LintIssue> issues = new ArrayList<>();
 
-    if (responseNode.has("success") && responseNode.get("success").asBoolean() && responseNode.has("issues")) {
+    if (responseNode.has("success")
+        && responseNode.get("success").asBoolean()
+        && responseNode.has("issues")) {
       JsonNode issuesNode = responseNode.get("issues");
       if (issuesNode.isArray()) {
         for (JsonNode issueNode : issuesNode) {
@@ -722,13 +734,13 @@ public class NodeJsServer implements AutoCloseable {
           }
 
           issues.add(
-                  new LintIssue(
-                          issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
-                          issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
-                          issueNode.has("message") ? issueNode.get("message").asText() : "",
-                          issueNode.has("line") ? issueNode.get("line").asInt() : 1,
-                          issueNode.has("column") ? issueNode.get("column").asInt() : 1,
-                          suggestion));
+              new LintIssue(
+                  issueNode.has("ruleId") ? issueNode.get("ruleId").asText() : "",
+                  issueNode.has("severity") ? issueNode.get("severity").asText() : "info",
+                  issueNode.has("message") ? issueNode.get("message").asText() : "",
+                  issueNode.has("line") ? issueNode.get("line").asInt() : 1,
+                  issueNode.has("column") ? issueNode.get("column").asInt() : 1,
+                  suggestion));
         }
       }
       return issues;
@@ -813,5 +825,6 @@ public class NodeJsServer implements AutoCloseable {
   }
 
   /** Represents an ESLint issue with enhanced suggestion support. */
-  public record LintIssue(String ruleId, String severity, String message, int line, int column, String suggestion) {}
+  public record LintIssue(
+      String ruleId, String severity, String message, int line, int column, String suggestion) {}
 }

@@ -4,6 +4,7 @@ plugins {
     id 'maven-publish'
     id 'com.diffplug.spotless' version '6.20.0'
     id 'com.github.node-gradle.node' version '3.5.1'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 group = 'com.codeformatter'
@@ -19,19 +20,34 @@ repositories {
 }
 
 dependencies {
+    // Core dependencies
     implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.25.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
     implementation 'com.github.javaparser:javaparser-core:3.25.4'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.14.2'
-
     implementation 'org.springframework:spring-core:6.0.6'
-
     implementation 'info.picocli:picocli:4.7.1'
 
+    // External tool dependencies (optional - tools can work via command line too)
+    // These are marked as compileOnly so they don't bloat the distribution
+    compileOnly 'com.puppycrawl.tools:checkstyle:10.12.4'
+    compileOnly 'net.sourceforge.pmd:pmd-java:6.55.0'
+    compileOnly 'net.sourceforge.pmd:pmd-core:6.55.0'
+
+    // Runtime-only dependencies for when tools are available
+    runtimeOnly 'com.puppycrawl.tools:checkstyle:10.12.4'
+    runtimeOnly 'net.sourceforge.pmd:pmd-java:6.55.0'
+    runtimeOnly 'net.sourceforge.pmd:pmd-core:6.55.0'
+
+    // Test dependencies
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
     testImplementation 'org.junit.jupiter:junit-jupiter-engine:5.9.2'
     testImplementation 'org.junit.platform:junit-platform-suite:1.9.2'
     testImplementation 'org.mockito:mockito-core:5.2.0'
+
+    // Test dependencies for external tools
+    testImplementation 'com.puppycrawl.tools:checkstyle:10.12.4'
+    testImplementation 'net.sourceforge.pmd:pmd-java:6.55.0'
 }
 
 // Node.js configuration
@@ -70,9 +86,50 @@ processResources {
     dependsOn installJsTools
 }
 
+// Configure Shadow JAR (fat JAR with proper signature handling)
+shadowJar {
+    manifest {
+        attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
+    }
+
+    // Include Node.js resources
+    from("${project.buildDir}/resources/main") {
+        include 'node/**'
+        include '.eslintrc.js'
+        include 'package.json'
+    }
+
+    // Exclude signature files to prevent conflicts
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude 'META-INF/LICENSE*'
+    exclude 'META-INF/NOTICE*'
+    exclude 'META-INF/maven/**'
+    exclude 'META-INF/gradle/**'
+
+    // Properly merge service files
+    mergeServiceFiles()
+
+    // Remove classifier to make this the main JAR
+    archiveClassifier = ''
+}
+
+// Replace regular JAR task with classpath-based approach
+jar {
+    manifest {
+        attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
+        attributes 'Class-Path': configurations.runtimeClasspath.collect { it.getName() }.join(' ')
+    }
+
+    // Don't include dependencies in regular JAR
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
 test {
     useJUnitPlatform()
-
     maxHeapSize = "1g"
 
     testLogging {
@@ -81,7 +138,10 @@ test {
         showStandardStreams = true
     }
 
-    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2)?: 1
+    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
+
+    // Set system properties for test external tool detection
+    systemProperty 'formatter.test.mode', 'true'
 }
 
 tasks.register('unitTest', Test) {
@@ -97,34 +157,20 @@ tasks.register('integrationTest', Test) {
     }
 }
 
-tasks.register('testCoverage', Test) {
-    group 'Verification'
-    description 'Runs tests without coverage enforcement'
-}
-
-// Improve JAR packaging to include all necessary resources
-jar {
-    manifest {
-        attributes 'Main-Class': 'com.codeformatter.cli.FormatterCli'
-    }
-
-    from {
-        configurations.runtimeClasspath.collect { it.isDirectory()? it : zipTree(it) }
-    }
-
-    // Include Node.js resources explicitly
-    from("${project.buildDir}/resources/main") {
-        include 'node/**'
-        include '.eslintrc.js'
-        include 'package.json'
-    }
-
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-// Modify the createDistributable task to include Node.js resources
+// Standard distribution (classpath-based, lightweight)
 tasks.register('createDistributable', Zip) {
+    dependsOn jar
+    archiveFileName = "advanced-formatter-${version}.zip"
+    destinationDirectory = file("$buildDir/distributions")
+
+    // Include the main JAR
     from jar
+
+    // Include all dependency JARs separately
+    from(configurations.runtimeClasspath) {
+        into 'lib'
+    }
+
     from('src/main/resources/scripts') {
         into 'bin'
         fileMode = 0755
@@ -132,7 +178,6 @@ tasks.register('createDistributable', Zip) {
     from('src/main/resources/config') {
         into 'config'
     }
-    // Include Node.js resources in the distribution
     from('node') {
         into 'node'
     }
@@ -141,11 +186,175 @@ tasks.register('createDistributable', Zip) {
     from '.eslintrc.js'
     from 'package.json'
 
-    archiveFileName = "advanced-formatter-${version}.zip"
+    // Include setup guide
+    from('docs') {
+        into 'docs'
+        include 'SETUP.md'
+        include 'EXTERNAL_TOOLS.md'
+    }
+}
+
+// Full distribution (fat JAR with everything included)
+tasks.register('createFullDistribution', Zip) {
+    dependsOn shadowJar
+    archiveFileName = "advanced-formatter-full-${version}.zip"
     destinationDirectory = file("$buildDir/distributions")
+
+    // Include the shadow JAR (fat JAR)
+    from shadowJar
+
+    from('src/main/resources/scripts') {
+        into 'bin'
+        fileMode = 0755
+    }
+    from('src/main/resources/config') {
+        into 'config'
+    }
+    from('node') {
+        into 'node'
+    }
+    from 'README.md'
+    from 'LICENSE'
+    from '.eslintrc.js'
+    from 'package.json'
+
+    // Include setup scripts for external tools
+    from('src/main/resources/setup') {
+        into 'setup'
+        fileMode = 0755
+    }
+
+    // Include setup guide
+    from('docs') {
+        into 'docs'
+        include 'SETUP.md'
+        include 'EXTERNAL_TOOLS.md'
+    }
 }
 
 build.dependsOn createDistributable
+
+// Task to check external tool availability
+tasks.register('checkExternalTools') {
+    group 'verification'
+    description 'Check availability of external tools (Checkstyle, PMD)'
+
+    doLast {
+        println "Checking external tool availability..."
+
+        // Check Checkstyle
+        try {
+            exec {
+                commandLine 'checkstyle', '--version'
+                standardOutput = new ByteArrayOutputStream()
+            }
+            println "✓ Checkstyle command line tool is available"
+        } catch (Exception e) {
+            println "✗ Checkstyle command line tool not found"
+
+            // Check for JAR in classpath
+            try {
+                Class.forName('com.puppycrawl.tools.checkstyle.Checker')
+                println "✓ Checkstyle JAR is available in classpath"
+            } catch (ClassNotFoundException cnfe) {
+                println "✗ Checkstyle JAR not available in classpath"
+            }
+        }
+
+        // Check PMD
+        try {
+            exec {
+                commandLine 'pmd', '--version'
+                standardOutput = new ByteArrayOutputStream()
+            }
+            println "✓ PMD command line tool is available"
+        } catch (Exception e) {
+            println "✗ PMD command line tool not found"
+
+            // Check for JAR in classpath
+            try {
+                Class.forName('net.sourceforge.pmd.PMD')
+                println "✓ PMD JAR is available in classpath"
+            } catch (ClassNotFoundException cnfe) {
+                println "✗ PMD JAR not available in classpath"
+            }
+        }
+
+        println "\nNote: External tools enhance analysis but are not required."
+        println "Run './gradlew installExternalTools' to install missing tools."
+    }
+}
+
+// Task to install external tools
+tasks.register('installExternalTools') {
+    group 'setup'
+    description 'Install external tools (Checkstyle, PMD) for enhanced analysis'
+
+    doLast {
+        println "Installing external tools..."
+
+        // Create tools directory
+        def toolsDir = file("$projectDir/tools")
+        toolsDir.mkdirs()
+
+        // Download and install Checkstyle
+        def checkstyleVersion = "10.12.4"
+        def checkstyleUrl = "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${checkstyleVersion}/checkstyle-${checkstyleVersion}-all.jar"
+        def checkstyleJar = file("$toolsDir/checkstyle-${checkstyleVersion}.jar")
+
+        if (!checkstyleJar.exists()) {
+            println "Downloading Checkstyle ${checkstyleVersion}..."
+            ant.get(src: checkstyleUrl, dest: checkstyleJar)
+            println "✓ Checkstyle installed to ${checkstyleJar}"
+        } else {
+            println "✓ Checkstyle already installed"
+        }
+
+        // Download and install PMD
+        def pmdVersion = "6.55.0"
+        def pmdUrl = "https://github.com/pmd/pmd/releases/download/pmd_releases%2F${pmdVersion}/pmd-bin-${pmdVersion}.zip"
+        def pmdZip = file("$toolsDir/pmd-${pmdVersion}.zip")
+        def pmdDir = file("$toolsDir/pmd-bin-${pmdVersion}")
+
+        if (!pmdDir.exists()) {
+            if (!pmdZip.exists()) {
+                println "Downloading PMD ${pmdVersion}..."
+                ant.get(src: pmdUrl, dest: pmdZip)
+            }
+
+            println "Extracting PMD..."
+            copy {
+                from zipTree(pmdZip)
+                into toolsDir
+            }
+            pmdZip.delete()
+            println "✓ PMD installed to ${pmdDir}"
+        } else {
+            println "✓ PMD already installed"
+        }
+
+        // Create convenience scripts
+        def scriptsDir = file("$projectDir/scripts")
+        scriptsDir.mkdirs()
+
+        // Checkstyle script
+        def checkstyleScript = file("$scriptsDir/checkstyle")
+        checkstyleScript.text = """#!/bin/bash
+java -jar "${checkstyleJar.absolutePath}" "\$@"
+"""
+        checkstyleScript.setExecutable(true)
+
+        // PMD script
+        def pmdScript = file("$scriptsDir/pmd")
+        pmdScript.text = """#!/bin/bash
+"${pmdDir.absolutePath}/bin/pmd" "\$@"
+"""
+        pmdScript.setExecutable(true)
+
+        println "\nExternal tools installed successfully!"
+        println "Add ${scriptsDir.absolutePath} to your PATH to use the tools globally."
+    }
+}
 
 spotless {
     java {
@@ -169,15 +378,15 @@ spotless {
         }
 
         prettier().config([
-            'printWidth': 80,
-            'tabWidth': 2,
-            'useTabs': false,
-            'semi': true,
-            'singleQuote': true,
-            'trailingComma': 'es5',
-            'bracketSpacing': true,
-            'jsxBracketSameLine': false,
-            'arrowParens': 'avoid'
+                'printWidth': 80,
+                'tabWidth': 2,
+                'useTabs': false,
+                'semi': true,
+                'singleQuote': true,
+                'trailingComma': 'es5',
+                'bracketSpacing': true,
+                'jsxBracketSameLine': false,
+                'arrowParens': 'avoid'
         ])
 
         endWithNewline()

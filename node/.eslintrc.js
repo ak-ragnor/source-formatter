@@ -12,7 +12,7 @@ module.exports = {
     'plugin:jsx-a11y/recommended',
     'plugin:security/recommended-legacy',
     'plugin:sonarjs/recommended-legacy',
-    'plugin:prettier/recommended'
+    'plugin:prettier/recommended',
   ],
   parser: '@babel/eslint-parser',
   parserOptions: {
@@ -23,10 +23,17 @@ module.exports = {
     sourceType: 'module',
     requireConfigFile: false,
     babelOptions: {
-      presets: ['@babel/preset-react']
-    }
+      presets: ['@babel/preset-react'],
+    },
   },
-  plugins: ['react', 'react-hooks', 'jsx-a11y', 'import', 'security', 'prettier'],
+  plugins: [
+    'react',
+    'react-hooks',
+    'jsx-a11y',
+    'import',
+    'security',
+    'prettier',
+  ],
   settings: {
     react: {
       version: 'detect',
@@ -38,22 +45,28 @@ module.exports = {
     },
   },
   rules: {
-    'prettier/prettier': ['error', {
-      printWidth: 100,
-      tabWidth: 2,
-      useTabs: false,
-      semi: true,
-      singleQuote: true,
-      trailingComma: 'es5',
-      bracketSpacing: true,
-      jsxBracketSameLine: false,
-      arrowParens: 'avoid',
-    }],
+    'prettier/prettier': [
+      'error',
+      {
+        printWidth: 100,
+        tabWidth: 2,
+        useTabs: false,
+        semi: true,
+        singleQuote: true,
+        trailingComma: 'es5',
+        bracketSpacing: true,
+        jsxBracketSameLine: false,
+        arrowParens: 'avoid',
+      },
+    ],
 
     // React rules with better suggestions
-    'react/prop-types': ['error', {
-      skipUndeclared: true
-    }],
+    'react/prop-types': [
+      'error',
+      {
+        skipUndeclared: true,
+      },
+    ],
     'react/react-in-jsx-scope': 'off',
     'react/jsx-filename-extension': [1, { extensions: ['.js', '.jsx'] }],
     'react-hooks/rules-of-hooks': 'error',
@@ -80,22 +93,28 @@ module.exports = {
 
     // Code style
     'no-console': ['warn', { allow: ['warn', 'error'] }],
-    'max-len': ['warn', {
-      code: 100,
-      ignoreComments: true,
-      ignoreUrls: true,
-      ignoreStrings: true,
-      ignoreTemplateLiterals: true
-    }],
+    'max-len': [
+      'warn',
+      {
+        code: 100,
+        ignoreComments: true,
+        ignoreUrls: true,
+        ignoreStrings: true,
+        ignoreTemplateLiterals: true,
+      },
+    ],
 
     // Common issues with better suggestions
-    'no-unused-vars': ['warn', {
-      vars: 'all',
-      args: 'after-used',
-      ignoreRestSiblings: true,
-      argsIgnorePattern: '^_',
-      caughtErrors: 'none'
-    }]
+    'no-unused-vars': [
+      'warn',
+      {
+        vars: 'all',
+        args: 'after-used',
+        ignoreRestSiblings: true,
+        argsIgnorePattern: '^_',
+        caughtErrors: 'none',
+      },
+    ],
   },
   overrides: [
     {

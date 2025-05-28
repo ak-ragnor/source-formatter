@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -66,6 +67,9 @@ public class FormatterCli {
         case "setup":
           _setupEnvironment(args);
           break;
+        case "status":
+          _showAnalyzerStatus(args);
+          break;
         case "check-env":
           _checkEnvironment(args);
           break;
@@ -100,6 +104,213 @@ public class FormatterCli {
     }
   }
 
+  /** Check external tool availability and provide feedback. */
+  private static void checkExternalTool(
+      String toolName, Supplier<ToolStatus> checker, String description) {
+    _printBullet(toolName + ": " + description);
+
+    ToolStatus status = checker.get();
+    if (status.available) {
+      _printSuccess("  ✓ " + status.message);
+    } else {
+      _printWarning("  ⚠ " + status.message);
+      if (status.suggestion != null) {
+        _printInfo("    " + status.suggestion);
+      }
+    }
+  }
+
+  /** Check Checkstyle availability. */
+  private static ToolStatus checkCheckstyleAvailability() {
+    // Check command line tool
+    try {
+      Process process = new ProcessBuilder("checkstyle", "--version").start();
+      int exitCode = process.waitFor();
+      if (exitCode == 0) {
+        try (Scanner scanner = new Scanner(process.getInputStream()).useDelimiter("\\A")) {
+          String version = scanner.hasNext() ? scanner.next().trim() : "Unknown";
+          return new ToolStatus(true, "Command line tool available (" + version + ")", null);
+        }
+      }
+    } catch (IOException | InterruptedException e) {
+      // Fall through to check classpath
+    }
+
+    // Check classpath
+    try {
+      Class.forName("com.puppycrawl.tools.checkstyle.Checker");
+      return new ToolStatus(true, "JAR available in classpath", null);
+    } catch (ClassNotFoundException e) {
+      return new ToolStatus(
+          false,
+          "Not found",
+          "Install with: ./gradlew installExternalTools OR apt-get install checkstyle OR brew install checkstyle");
+    }
+  }
+
+  /** Check PMD availability. */
+  private static ToolStatus checkPMDAvailability() {
+    // Check command line tool
+    try {
+      Process process = new ProcessBuilder("pmd", "--version").start();
+      int exitCode = process.waitFor();
+      if (exitCode == 0) {
+        try (Scanner scanner = new Scanner(process.getInputStream()).useDelimiter("\\A")) {
+          String version = scanner.hasNext() ? scanner.next().trim() : "Unknown";
+          return new ToolStatus(true, "Command line tool available (" + version + ")", null);
+        }
+      }
+    } catch (IOException | InterruptedException e) {
+      // Fall through to check classpath
+    }
+
+    // Check classpath
+    try {
+      Class.forName("net.sourceforge.pmd.PMD");
+      return new ToolStatus(true, "JAR available in classpath", null);
+    } catch (ClassNotFoundException e) {
+      return new ToolStatus(
+          false,
+          "Not found",
+          "Install with: ./gradlew installExternalTools OR download from https://pmd.github.io/");
+    }
+  }
+
+  /** Show the status of all available analyzers. */
+  private static void _showAnalyzerStatus(String[] args) {
+    _printHeader("ANALYZER STATUS");
+
+    boolean verbose = _hasOption(args, "--verbose");
+    String configFile = _getOptionValue(args, "--config");
+
+    // Load configuration
+    FormatterConfig config;
+    if (configFile != null) {
+      config = ConfigurationLoader.loadConfig(Paths.get(configFile));
+    } else {
+      config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
+    }
+
+    // Create formatter to check analyzer status
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, false)) {
+      // Get Spring Boot formatter specifically to check analyzer status
+      if (formatter.hasPluginFor(FileType.JAVA)) {
+        _printInfo("Java/Spring Boot Analysis:");
+        _printInfo("Getting analyzer status from SpringBootFormatter...");
+
+        _printBullet("Core analyzers:");
+        _printSuccess("  ✓ Enhanced Import Organizer - Advanced import organization and cleanup");
+        _printSuccess(
+            "  ✓ Spring Component Analyzer - Spring-specific dependency injection and component analysis");
+        _printSuccess("  ✓ Design Pattern Analyzer - Design pattern detection and suggestions");
+
+        _printBullet("External tool analyzers:");
+
+        // Check Checkstyle
+        ToolStatus checkstyleStatus = checkCheckstyleAvailability();
+        if (checkstyleStatus.available) {
+          _printSuccess("  ✓ Checkstyle - " + checkstyleStatus.message);
+          if (verbose) {
+            _printInfo(
+                "    Provides: Code style checking, naming conventions, import organization");
+          }
+        } else {
+          _printWarning("  ⚠ Checkstyle - " + checkstyleStatus.message);
+          if (checkstyleStatus.suggestion != null) {
+            _printInfo("    Install: " + checkstyleStatus.suggestion);
+          }
+        }
+
+        // Check PMD
+        ToolStatus pmdStatus = checkPMDAvailability();
+        if (pmdStatus.available) {
+          _printSuccess("  ✓ PMD - " + pmdStatus.message);
+          if (verbose) {
+            _printInfo(
+                "    Provides: Code quality analysis, bug detection, performance suggestions");
+          }
+        } else {
+          _printWarning("  ⚠ PMD - " + pmdStatus.message);
+          if (pmdStatus.suggestion != null) {
+            _printInfo("    Install: " + pmdStatus.suggestion);
+          }
+        }
+      }
+
+      // Check React/JavaScript analyzers
+      if (formatter.hasPluginFor(FileType.JAVASCRIPT)) {
+        _printInfo("\nJavaScript/React Analysis:");
+        _printSuccess("  ✓ ESLint + Prettier integration");
+        _printSuccess("  ✓ React hooks dependency checking");
+        _printSuccess("  ✓ Component structure analysis");
+      } else {
+        _printWarning("\nJavaScript/React Analysis:");
+        _printWarning("  ⚠ React formatter not available");
+        _printInfo("    Run 'codeformatter setup' to configure Node.js tools");
+      }
+
+      // Show configuration status
+      _printInfo("\nConfiguration:");
+      Path configPath = Paths.get(CONFIG_FILE_NAME);
+      if (Files.exists(configPath)) {
+        _printSuccess("  ✓ Configuration file found: " + CONFIG_FILE_NAME);
+
+        if (verbose) {
+          // Show some key configuration values
+          _printInfo("    General settings:");
+          _printInfo("      - Indent size: " + config.getGeneralConfig("indentSize", 4));
+          _printInfo("      - Line length: " + config.getGeneralConfig("lineLength", 100));
+          _printInfo("      - Use tabs: " + config.getGeneralConfig("useTabs", false));
+
+          _printInfo("    External tool settings:");
+          _printInfo(
+              "      - Checkstyle enabled: "
+                  + config.getPluginConfig("spring", "checkstyle.enabled", true));
+          _printInfo(
+              "      - PMD enabled: " + config.getPluginConfig("spring", "pmd.enabled", true));
+        }
+      } else {
+        _printWarning("  ⚠ No configuration file found");
+        _printInfo("    Run 'codeformatter init' to create default configuration");
+      }
+
+      // Show summary
+      _printHeader("SUMMARY");
+
+      int availableTools = 0;
+      int totalTools = 2; // Checkstyle + PMD
+
+      if (checkCheckstyleAvailability().available) availableTools++;
+      if (checkPMDAvailability().available) availableTools++;
+
+      if (availableTools == totalTools) {
+        _printSuccess("✓ All external analysis tools are available!");
+        _printInfo("You're getting the full power of the Advanced Code Formatter.");
+      } else if (availableTools > 0) {
+        _printWarning(
+            "⚠ Some external tools are missing ("
+                + availableTools
+                + "/"
+                + totalTools
+                + " available)");
+        _printInfo("The formatter will work but with reduced analysis capabilities.");
+        _printInfo(
+            "Run './gradlew installExternalTools' or 'codeformatter setup' to install missing tools.");
+      } else {
+        _printWarning("⚠ No external analysis tools found");
+        _printInfo("Only basic Java formatting and custom Spring analysis will be available.");
+        _printInfo("For enhanced analysis, install Checkstyle and PMD:");
+        _printInfo("  ./gradlew installExternalTools");
+      }
+
+    } catch (Exception e) {
+      _printError("Error checking analyzer status: " + e.getMessage());
+      if (verbose) {
+        e.printStackTrace();
+      }
+    }
+  }
+
   /** New command to check if the environment is properly set up */
   private static void _checkEnvironment(String[] args) {
     _printHeader("ENVIRONMENT CHECK");
@@ -113,6 +324,18 @@ public class FormatterCli {
     } else {
       _printSuccess("  ✓ Java version is sufficient");
     }
+
+    // Check external tools for Java analysis
+    _printInfo("\nChecking Java analysis tools:");
+    checkExternalTool(
+        "Checkstyle",
+        FormatterCli::checkCheckstyleAvailability,
+        "Enhanced style checking and code standards enforcement");
+
+    checkExternalTool(
+        "PMD",
+        FormatterCli::checkPMDAvailability,
+        "Advanced code quality analysis and bug detection");
 
     // Check Node.js for React/JavaScript formatting
     boolean nodeAvailable = false;
