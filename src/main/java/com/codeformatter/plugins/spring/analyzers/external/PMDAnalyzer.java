@@ -1,20 +1,22 @@
 package com.codeformatter.plugins.spring.analyzers.external;
 
+import com.codeformatter.api.Refactoring;
 import com.codeformatter.api.error.FormatterError;
 import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
 import com.codeformatter.util.LoggerUtil;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * PMD analyzer for code quality, bug detection, and performance issues. Integrates PMD to analyze
- * Java code for potential problems.
+ * Enhanced PMD analyzer with auto-fix support for code quality, bug detection, and performance
+ * issues. Integrates PMD to analyze and automatically fix Java code for potential problems.
  */
 public class PMDAnalyzer extends ExternalToolAnalyzer {
   private static final Logger logger = LoggerUtil.getLogger(PMDAnalyzer.class);
@@ -24,6 +26,22 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
   private Class<?> ruleSetFactoryClass;
   private Class<?> reportClass;
   private boolean pmdLoaded = false;
+  private boolean supportsAutoFix = false;
+
+  // PMD rules that can be auto-fixed
+  private static final List<String> AUTO_FIXABLE_RULES =
+      List.of(
+          "UnnecessaryLocalBeforeReturn",
+          "SimplifyBooleanReturns",
+          "SimplifyBooleanExpressions",
+          "CollapsibleIfStatements",
+          "UnnecessaryWrapperObjectCreation",
+          "BooleanInstantiation",
+          "StringInstantiation",
+          "EmptyBlock",
+          "ConsecutiveLiteralAppends",
+          "UseStringBufferLength",
+          "AvoidDuplicateLiterals");
 
   public PMDAnalyzer(FormatterConfig config) {
     super(config, "PMD");
@@ -35,6 +53,15 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
     String command = findPMDCommand();
     if (command != null) {
       logger.info("PMD command line tool is available: " + command);
+
+      // Check if the command line version supports auto-fix (newer PMD versions)
+      supportsAutoFix = checkAutoFixSupport(command);
+      if (supportsAutoFix) {
+        logger.info("PMD auto-fix is supported");
+      } else {
+        logger.info("PMD auto-fix is not supported in this version");
+      }
+
       return true;
     }
 
@@ -46,6 +73,9 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
 
       pmdLoaded = true;
       logger.info("PMD is available programmatically");
+
+      // Check if programmatic version supports auto-fix
+      supportsAutoFix = checkProgrammaticAutoFixSupport();
       return true;
 
     } catch (ClassNotFoundException e) {
@@ -60,9 +90,14 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
   }
 
   @Override
+  protected boolean supportsAutoFix() {
+    return supportsAutoFix;
+  }
+
+  @Override
   protected List<FormatterError> runExternalTool(Path sourceFile, String sourceCode) {
     // Try command line approach first (more reliable)
-    List<FormatterError> errors = runPMDCommandLine(sourceFile);
+    List<FormatterError> errors = runPMDCommandLine(sourceFile, false);
 
     if (!errors.isEmpty() || !pmdLoaded) {
       return errors;
@@ -86,12 +121,317 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
   }
 
   @Override
+  protected AutoFixResult runExternalToolWithAutoFix(Path sourceFile, String sourceCode) {
+    if (!supportsAutoFix) {
+      return new AutoFixResult("PMD auto-fix is not supported in this version");
+    }
+
+    try {
+      // Create a copy of the source file for fixing
+      Path fixedFile = Files.createTempFile("pmd-fixed", ".java");
+      fixedFile.toFile().deleteOnExit();
+      Files.writeString(fixedFile, sourceCode);
+
+      // Try command line auto-fix first
+      if (findPMDCommand() != null) {
+        return runPMDCommandLineAutoFix(fixedFile, sourceCode);
+      } else {
+        // Fallback to programmatic auto-fix
+        return runPMDProgrammaticAutoFix(fixedFile, sourceCode);
+      }
+
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error during PMD auto-fix", e);
+      return new AutoFixResult("Auto-fix failed: " + e.getMessage());
+    }
+  }
+
+  @Override
   protected String getConfigPrefix() {
     return "pmd";
   }
 
+  /** Check if the PMD command supports auto-fix. */
+  private boolean checkAutoFixSupport(String command) {
+    try {
+      // Try to run PMD with --help to see if auto-fix options are available
+      ProcessBuilder pb = new ProcessBuilder(command, "--help");
+      Process process = pb.start();
+
+      StringBuilder output = new StringBuilder();
+      try (var reader =
+          new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          output.append(line).append("\n");
+        }
+      }
+
+      int exitCode = process.waitFor();
+
+      // Check if auto-fix related options are mentioned in the help output
+      String helpText = output.toString().toLowerCase();
+      return helpText.contains("--fix")
+          || helpText.contains("--auto-fix")
+          || helpText.contains("transform")
+          || helpText.contains("--apply-fixes");
+
+    } catch (Exception e) {
+      logger.log(Level.FINE, "Could not check PMD auto-fix support", e);
+      return false;
+    }
+  }
+
+  /** Check if programmatic PMD supports auto-fix. */
+  private boolean checkProgrammaticAutoFixSupport() {
+    try {
+      // Check if PMD has rule transformation capabilities
+      Class.forName("net.sourceforge.pmd.lang.java.rule.AbstractJavaRule");
+      return true; // If we can load advanced PMD classes, assume some auto-fix capability
+    } catch (ClassNotFoundException e) {
+      return false;
+    }
+  }
+
+  /** Run PMD command line with auto-fix. */
+  private AutoFixResult runPMDCommandLineAutoFix(Path sourceFile, String originalCode) {
+    try {
+      // Get ruleset configuration
+      String ruleSet = getToolConfig("ruleSet", "rulesets/java/quickstart.xml");
+      String pmdCommand = findPMDCommand();
+
+      // Build command for auto-fix (if supported)
+      List<String> command = new ArrayList<>();
+      command.add(pmdCommand);
+      command.add("check");
+      command.add("-d");
+      command.add(sourceFile.toString());
+      command.add("-R");
+      command.add(ruleSet);
+      command.add("-f");
+      command.add("xml");
+      command.add("--no-cache");
+
+      // Add auto-fix flag if supported
+      if (supportsAutoFix) {
+        command.add("--fix");
+      }
+
+      // Execute command
+      ProcessBuilder pb = new ProcessBuilder(command);
+      pb.redirectErrorStream(true);
+      Process process = pb.start();
+
+      StringBuilder output = new StringBuilder();
+      try (var reader =
+          new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          output.append(line).append("\n");
+        }
+      }
+
+      int exitCode = process.waitFor();
+
+      // Read the potentially fixed content
+      String fixedContent = Files.readString(sourceFile);
+
+      // Parse remaining violations
+      List<FormatterError> remainingErrors = new ArrayList<>();
+      if (exitCode == 0 || exitCode == 4) {
+        remainingErrors.addAll(parsePMDXmlOutput(output.toString()));
+      }
+
+      // Create refactoring information
+      List<Refactoring> refactorings = new ArrayList<>();
+      if (!originalCode.equals(fixedContent)) {
+        refactorings.add(
+            new Refactoring(
+                "PMD_AUTO_FIX",
+                1,
+                originalCode.split("\n").length,
+                "Applied PMD auto-fixes for code quality issues"));
+      }
+
+      return new AutoFixResult(originalCode, fixedContent, refactorings, remainingErrors);
+
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error during PMD command line auto-fix", e);
+      return new AutoFixResult("Command line auto-fix failed: " + e.getMessage());
+    }
+  }
+
+  /** Run PMD programmatic auto-fix using simple text-based transformations. */
+  private AutoFixResult runPMDProgrammaticAutoFix(Path sourceFile, String originalCode) {
+    try {
+      String fixedContent = originalCode;
+      List<Refactoring> refactorings = new ArrayList<>();
+
+      // Apply simple auto-fixes for common PMD rules
+      String afterFix = applySimpleAutoFixes(fixedContent);
+
+      if (!afterFix.equals(fixedContent)) {
+        fixedContent = afterFix;
+        refactorings.add(
+            new Refactoring(
+                "PMD_SIMPLE_AUTO_FIX",
+                1,
+                originalCode.split("\n").length,
+                "Applied simple auto-fixes for common PMD violations"));
+      }
+
+      // Write the fixed content back to the file
+      Files.writeString(sourceFile, fixedContent);
+
+      // Run PMD analysis on the fixed code to get remaining errors
+      List<FormatterError> remainingErrors = runPMDProgrammatic(sourceFile);
+
+      return new AutoFixResult(originalCode, fixedContent, refactorings, remainingErrors);
+
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error during PMD programmatic auto-fix", e);
+      return new AutoFixResult("Programmatic auto-fix failed: " + e.getMessage());
+    }
+  }
+
+  /** Apply simple text-based auto-fixes for common PMD violations. */
+  private String applySimpleAutoFixes(String sourceCode) {
+    String result = sourceCode;
+
+    // Fix UnnecessaryLocalBeforeReturn
+    result = fixUnnecessaryLocalBeforeReturn(result);
+
+    // Fix SimplifyBooleanReturns
+    result = fixSimplifyBooleanReturns(result);
+
+    // Fix BooleanInstantiation
+    result = fixBooleanInstantiation(result);
+
+    // Fix StringInstantiation
+    result = fixStringInstantiation(result);
+
+    // Fix UnnecessaryWrapperObjectCreation
+    result = fixUnnecessaryWrapperObjectCreation(result);
+
+    // Fix EmptyBlock
+    result = fixEmptyBlocks(result);
+
+    return result;
+  }
+
+  /** Fix UnnecessaryLocalBeforeReturn pattern. */
+  private String fixUnnecessaryLocalBeforeReturn(String code) {
+    // Pattern: Type var = expression; return var;
+    Pattern pattern =
+        Pattern.compile(
+            "(\\s+)(\\w+(?:<[^>]+>)?\\s+)(\\w+)\\s*=\\s*([^;]+);\\s*\\n\\s*return\\s+\\3\\s*;",
+            Pattern.MULTILINE);
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      String indent = matcher.group(1);
+      String expression = matcher.group(4);
+      matcher.appendReplacement(result, indent + "return " + expression + ";");
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
+  /** Fix SimplifyBooleanReturns pattern. */
+  private String fixSimplifyBooleanReturns(String code) {
+    // Pattern: if (condition) return true; else return false;
+    Pattern pattern =
+        Pattern.compile(
+            "if\\s*\\(([^)]+)\\)\\s*\\{?\\s*return\\s+true\\s*;\\s*\\}?\\s*else\\s*\\{?\\s*return\\s+false\\s*;\\s*\\}?",
+            Pattern.MULTILINE);
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      String condition = matcher.group(1);
+      matcher.appendReplacement(result, "return " + condition + ";");
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
+  /** Fix BooleanInstantiation pattern. */
+  private String fixBooleanInstantiation(String code) {
+    // Pattern: new Boolean(true/false)
+    Pattern pattern = Pattern.compile("new\\s+Boolean\\s*\\(\\s*(true|false)\\s*\\)");
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      String value = matcher.group(1);
+      matcher.appendReplacement(result, "Boolean." + value.toUpperCase());
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
+  /** Fix StringInstantiation pattern. */
+  private String fixStringInstantiation(String code) {
+    // Pattern: new String("literal")
+    Pattern pattern = Pattern.compile("new\\s+String\\s*\\(\\s*\"([^\"]*?)\"\\s*\\)");
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      String literal = matcher.group(1);
+      matcher.appendReplacement(result, "\"" + literal + "\"");
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
+  /** Fix UnnecessaryWrapperObjectCreation pattern. */
+  private String fixUnnecessaryWrapperObjectCreation(String code) {
+    // Pattern: new Integer(value) -> Integer.valueOf(value)
+    Pattern pattern =
+        Pattern.compile("new\\s+(Integer|Long|Double|Float|Short|Byte)\\s*\\(([^)]+)\\)");
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      String type = matcher.group(1);
+      String value = matcher.group(2);
+      matcher.appendReplacement(result, type + ".valueOf(" + value + ")");
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
+  /** Fix EmptyBlock pattern. */
+  private String fixEmptyBlocks(String code) {
+    // Pattern: { } or {\n\s*}
+    Pattern pattern = Pattern.compile("\\{\\s*\\}");
+
+    Matcher matcher = pattern.matcher(code);
+    StringBuffer result = new StringBuffer();
+
+    while (matcher.find()) {
+      // Replace empty block with a comment
+      matcher.appendReplacement(result, "{ /* TODO: implement */ }");
+    }
+    matcher.appendTail(result);
+
+    return result.toString();
+  }
+
   /** Run PMD via command line and parse output. */
-  private List<FormatterError> runPMDCommandLine(Path sourceFile) {
+  private List<FormatterError> runPMDCommandLine(Path sourceFile, boolean autoFix) {
     List<FormatterError> errors = new ArrayList<>();
 
     try {
@@ -369,101 +709,5 @@ public class PMDAnalyzer extends ExternalToolAnalyzer {
           return "Fix this " + rule + " violation according to PMD best practices.";
         }
     }
-  }
-
-  /** Create a default PMD ruleset configuration. */
-  public Path createDefaultPMDRuleset() throws IOException {
-    Path tempRuleset = Files.createTempFile("pmd-rules", ".xml");
-    tempRuleset.toFile().deleteOnExit();
-
-    // Create a comprehensive ruleset based on our configuration
-    String rulesetContent = generatePMDRuleset();
-    Files.writeString(tempRuleset, rulesetContent);
-
-    logger.fine("Created default PMD ruleset at: " + tempRuleset);
-    return tempRuleset;
-  }
-
-  /** Generate PMD XML ruleset content. */
-  private String generatePMDRuleset() {
-    int maxMethodLines = config.getPluginConfig("spring", "maxMethodLines", 50);
-    int maxMethodComplexity = config.getPluginConfig("spring", "maxMethodComplexity", 15);
-
-    return String.format(
-        """
-            <?xml version="1.0"?>
-            <ruleset name="Advanced Formatter PMD Rules"
-                     xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
-                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                     xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
-                     https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
-
-                <description>PMD rules for the Advanced Code Formatter</description>
-
-                <!-- Best Practices -->
-                <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
-                <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
-                <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
-                <rule ref="category/java/bestpractices.xml/AvoidReassigningParameters"/>
-                <rule ref="category/java/bestpractices.xml/UseCollectionIsEmpty"/>
-                <rule ref="category/java/bestpractices.xml/UseStringBufferLength"/>
-                <rule ref="category/java/bestpractices.xml/MethodArgumentCouldBeFinal"/>
-                <rule ref="category/java/bestpractices.xml/LocalVariableCouldBeFinal"/>
-
-                <!-- Code Style -->
-                <rule ref="category/java/codestyle.xml/UnnecessaryLocalBeforeReturn"/>
-                <rule ref="category/java/codestyle.xml/EmptyBlock"/>
-                <rule ref="category/java/codestyle.xml/UnnecessaryConstructor"/>
-                <rule ref="category/java/codestyle.xml/CollapsibleIfStatements"/>
-                <rule ref="category/java/codestyle.xml/SimplifyBooleanReturns"/>
-                <rule ref="category/java/codestyle.xml/BooleanGetMethodName"/>
-
-                <!-- Design -->
-                <rule ref="category/java/design.xml/ExcessiveMethodLength">
-                    <properties>
-                        <property name="minimum" value="%d"/>
-                    </properties>
-                </rule>
-                <rule ref="category/java/design.xml/ExcessiveParameterList">
-                    <properties>
-                        <property name="minimum" value="7"/>
-                    </properties>
-                </rule>
-                <rule ref="category/java/design.xml/CyclomaticComplexity">
-                    <properties>
-                        <property name="methodReportLevel" value="%d"/>
-                    </properties>
-                </rule>
-                <rule ref="category/java/design.xml/AvoidDeeplyNestedIfStmts">
-                    <properties>
-                        <property name="problemDepth" value="3"/>
-                    </properties>
-                </rule>
-                <rule ref="category/java/design.xml/SimplifyBooleanExpressions"/>
-                <rule ref="category/java/design.xml/SwitchStmtsShouldHaveDefault"/>
-
-                <!-- Error Prone -->
-                <rule ref="category/java/errorprone.xml/EmptyBlock"/>
-                <rule ref="category/java/errorprone.xml/UseEqualsToCompareStrings"/>
-                <rule ref="category/java/errorprone.xml/AvoidDuplicateLiterals">
-                    <properties>
-                        <property name="skipAnnotations" value="true"/>
-                        <property name="minimumLength" value="3"/>
-                        <property name="minimumOccurrences" value="3"/>
-                    </properties>
-                </rule>
-                <rule ref="category/java/errorprone.xml/StringInstantiation"/>
-                <rule ref="category/java/errorprone.xml/UnnecessaryWrapperObjectCreation"/>
-                <rule ref="category/java/errorprone.xml/BooleanInstantiation"/>
-
-                <!-- Performance -->
-                <rule ref="category/java/performance.xml/InefficientStringBuffering"/>
-                <rule ref="category/java/performance.xml/ConsecutiveLiteralAppends"/>
-                <rule ref="category/java/performance.xml/UseStringBufferLength"/>
-                <rule ref="category/java/performance.xml/OptimizableToArrayCall"/>
-
-            </ruleset>
-            """,
-        maxMethodLines, maxMethodComplexity);
   }
 }

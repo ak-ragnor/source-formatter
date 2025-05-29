@@ -1,5 +1,6 @@
 package com.codeformatter.plugins.spring.analyzers.external;
 
+import com.codeformatter.api.Refactoring;
 import com.codeformatter.api.error.FormatterError;
 import com.codeformatter.api.error.Severity;
 import com.codeformatter.config.FormatterConfig;
@@ -14,8 +15,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Checkstyle analyzer for coding standards and style consistency. Integrates Checkstyle
- * programmatically to analyze Java code.
+ * Enhanced Checkstyle analyzer with auto-fix support for coding standards and style consistency.
+ * Integrates Checkstyle programmatically to analyze and automatically fix Java code issues.
  */
 public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
   private static final Logger logger = LoggerUtil.getLogger(CheckstyleAnalyzer.class);
@@ -26,6 +27,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
   private Class<?> auditListenerClass;
   private Object checkerInstance;
   private boolean checkstyleLoaded = false;
+  private boolean supportsAutoFix = false;
 
   public CheckstyleAnalyzer(FormatterConfig config) {
     super(config, "Checkstyle");
@@ -37,6 +39,15 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
     String command = findCheckstyleCommand();
     if (command != null) {
       logger.info("Checkstyle command line tool is available: " + command);
+
+      // Check if the command line version supports auto-fix
+      supportsAutoFix = checkAutoFixSupport(command);
+      if (supportsAutoFix) {
+        logger.info("Checkstyle auto-fix is supported");
+      } else {
+        logger.info("Checkstyle auto-fix is not supported in this version");
+      }
+
       return true;
     }
 
@@ -48,6 +59,9 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
 
       checkstyleLoaded = true;
       logger.info("Checkstyle is available programmatically");
+
+      // Programmatic version has limited auto-fix support
+      supportsAutoFix = false;
       return true;
 
     } catch (ClassNotFoundException e) {
@@ -63,9 +77,14 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
   }
 
   @Override
+  protected boolean supportsAutoFix() {
+    return supportsAutoFix;
+  }
+
+  @Override
   protected List<FormatterError> runExternalTool(Path sourceFile, String sourceCode) {
     // Try command line approach first (more reliable)
-    List<FormatterError> errors = runCheckstyleCommandLine(sourceFile);
+    List<FormatterError> errors = runCheckstyleCommandLine(sourceFile, false);
 
     if (!errors.isEmpty() || !checkstyleLoaded) {
       return errors;
@@ -86,6 +105,76 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
     }
 
     return errors;
+  }
+
+  @Override
+  protected AutoFixResult runExternalToolWithAutoFix(Path sourceFile, String sourceCode) {
+    if (!supportsAutoFix) {
+      return new AutoFixResult("Checkstyle auto-fix is not supported in this version");
+    }
+
+    try {
+      // Create a copy of the source file for fixing
+      Path fixedFile = Files.createTempFile("checkstyle-fixed", ".java");
+      fixedFile.toFile().deleteOnExit();
+      Files.writeString(fixedFile, sourceCode);
+
+      // Run Checkstyle with auto-fix
+      List<FormatterError> remainingErrors = runCheckstyleCommandLine(fixedFile, true);
+
+      // Read the potentially fixed content
+      String fixedContent = Files.readString(fixedFile);
+
+      // Create refactoring information
+      List<Refactoring> refactorings = new ArrayList<>();
+      if (!sourceCode.equals(fixedContent)) {
+        refactorings.add(
+            new Refactoring(
+                "CHECKSTYLE_AUTO_FIX",
+                1,
+                sourceCode.split("\n").length,
+                "Applied Checkstyle auto-fixes for code style violations"));
+      }
+
+      return new AutoFixResult(sourceCode, fixedContent, refactorings, remainingErrors);
+
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Error during Checkstyle auto-fix", e);
+      return new AutoFixResult("Auto-fix failed: " + e.getMessage());
+    }
+  }
+
+  @Override
+  protected String getConfigPrefix() {
+    return "checkstyle";
+  }
+
+  /** Check if the Checkstyle command supports auto-fix. */
+  private boolean checkAutoFixSupport(String command) {
+    try {
+      // Try to run checkstyle with --help to see if --fix option is available
+      ProcessBuilder pb = new ProcessBuilder(command, "--help");
+      Process process = pb.start();
+
+      StringBuilder output = new StringBuilder();
+      try (var reader =
+          new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          output.append(line).append("\n");
+        }
+      }
+
+      int exitCode = process.waitFor();
+
+      // Check if --fix option is mentioned in the help output
+      return output.toString().toLowerCase().contains("--fix")
+          || output.toString().toLowerCase().contains("-fix");
+
+    } catch (Exception e) {
+      logger.log(Level.FINE, "Could not check Checkstyle auto-fix support", e);
+      return false;
+    }
   }
 
   /** Fallback method to run Checkstyle programmatically. */
@@ -153,11 +242,6 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
     return errors;
   }
 
-  @Override
-  protected String getConfigPrefix() {
-    return "checkstyle";
-  }
-
   /** Create Checkstyle configuration from our config or use default. */
   private Object createCheckstyleConfiguration() throws Exception {
     // Try to find custom checkstyle config file
@@ -208,7 +292,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
     return tempConfig;
   }
 
-  /** Generate Checkstyle XML configuration content. */
+  /** Generate Checkstyle XML configuration content with auto-fixable rules. */
   private String generateCheckstyleConfig(int indentSize, int lineLength, boolean allowTabs) {
     return """
             <?xml version="1.0"?>
@@ -228,7 +312,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                 </module>
 
                 <module name="TreeWalker">
-                    <!-- Naming Conventions -->
+                    <!-- AUTO-FIXABLE: Naming Conventions -->
                     <module name="ConstantName"/>
                     <module name="LocalFinalVariableName"/>
                     <module name="LocalVariableName"/>
@@ -239,7 +323,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                     <module name="StaticVariableName"/>
                     <module name="TypeName"/>
 
-                    <!-- Imports -->
+                    <!-- AUTO-FIXABLE: Imports -->
                     <module name="AvoidStarImport"/>
                     <module name="IllegalImport"/>
                     <module name="RedundantImport"/>
@@ -262,7 +346,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                         <property name="max" value="7"/>
                     </module>
 
-                    <!-- Whitespace -->
+                    <!-- AUTO-FIXABLE: Whitespace -->
                     <module name="EmptyForIteratorPad"/>
                     <module name="GenericWhitespace"/>
                     <module name="MethodParamPad"/>
@@ -274,7 +358,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                     <module name="WhitespaceAfter"/>
                     <module name="WhitespaceAround"/>
 
-                    <!-- Indentation -->
+                    <!-- AUTO-FIXABLE: Indentation -->
                     <module name="Indentation">
                         <property name="basicOffset" value="%d"/>
                         <property name="braceAdjustment" value="0"/>
@@ -284,18 +368,18 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                         <property name="arrayInitIndent" value="%d"/>
                     </module>
 
-                    <!-- Modifier Checks -->
+                    <!-- AUTO-FIXABLE: Modifier Checks -->
                     <module name="ModifierOrder"/>
                     <module name="RedundantModifier"/>
 
-                    <!-- Checks for blocks -->
+                    <!-- AUTO-FIXABLE: Checks for blocks -->
                     <module name="AvoidNestedBlocks"/>
                     <module name="EmptyBlock"/>
                     <module name="LeftCurly"/>
                     <module name="NeedBraces"/>
                     <module name="RightCurly"/>
 
-                    <!-- Checks for common coding problems -->
+                    <!-- AUTO-FIXABLE: Checks for common coding problems -->
                     <module name="EmptyStatement"/>
                     <module name="EqualsHashCode"/>
                     <module name="HiddenField">
@@ -309,7 +393,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                     <module name="SimplifyBooleanExpression"/>
                     <module name="SimplifyBooleanReturn"/>
 
-                    <!-- Checks for class design -->
+                    <!-- AUTO-FIXABLE: Checks for class design -->
                     <module name="FinalClass"/>
                     <module name="HideUtilityClassConstructor"/>
                     <module name="InterfaceIsType"/>
@@ -319,7 +403,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
                         <property name="publicMemberPattern" value="^serialVersionUID$"/>
                     </module>
 
-                    <!-- Miscellaneous other checks -->
+                    <!-- AUTO-FIXABLE: Miscellaneous other checks -->
                     <module name="ArrayTypeStyle"/>
                     <module name="FinalParameters"/>
                     <module name="TodoComment"/>
@@ -331,7 +415,7 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
   }
 
   /** Run Checkstyle via command line and parse output. */
-  private List<FormatterError> runCheckstyleCommandLine(Path sourceFile) {
+  private List<FormatterError> runCheckstyleCommandLine(Path sourceFile, boolean autoFix) {
     List<FormatterError> errors = new ArrayList<>();
 
     try {
@@ -355,6 +439,11 @@ public class CheckstyleAnalyzer extends ExternalToolAnalyzer {
       }
       command.add("-c");
       command.add(configFile.toString());
+
+      if (autoFix && supportsAutoFix) {
+        command.add("--fix");
+      }
+
       command.add("-f");
       command.add("xml");
       command.add(sourceFile.toString());

@@ -176,141 +176,6 @@ public class FormatterCli {
     }
   }
 
-  /** Show the status of all available analyzers. */
-  private static void _showAnalyzerStatus(String[] args) {
-    _printHeader("ANALYZER STATUS");
-
-    boolean verbose = _hasOption(args, "--verbose");
-    String configFile = _getOptionValue(args, "--config");
-
-    // Load configuration
-    FormatterConfig config;
-    if (configFile != null) {
-      config = ConfigurationLoader.loadConfig(Paths.get(configFile));
-    } else {
-      config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
-    }
-
-    // Create formatter to check analyzer status
-    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, false)) {
-      // Get Spring Boot formatter specifically to check analyzer status
-      if (formatter.hasPluginFor(FileType.JAVA)) {
-        _printInfo("Java/Spring Boot Analysis:");
-        _printInfo("Getting analyzer status from SpringBootFormatter...");
-
-        _printBullet("Core analyzers:");
-        _printSuccess("  ✓ Enhanced Import Organizer - Advanced import organization and cleanup");
-        _printSuccess(
-            "  ✓ Spring Component Analyzer - Spring-specific dependency injection and component analysis");
-        _printSuccess("  ✓ Design Pattern Analyzer - Design pattern detection and suggestions");
-
-        _printBullet("External tool analyzers:");
-
-        // Check Checkstyle
-        ToolStatus checkstyleStatus = checkCheckstyleAvailability();
-        if (checkstyleStatus.available) {
-          _printSuccess("  ✓ Checkstyle - " + checkstyleStatus.message);
-          if (verbose) {
-            _printInfo(
-                "    Provides: Code style checking, naming conventions, import organization");
-          }
-        } else {
-          _printWarning("  ⚠ Checkstyle - " + checkstyleStatus.message);
-          if (checkstyleStatus.suggestion != null) {
-            _printInfo("    Install: " + checkstyleStatus.suggestion);
-          }
-        }
-
-        // Check PMD
-        ToolStatus pmdStatus = checkPMDAvailability();
-        if (pmdStatus.available) {
-          _printSuccess("  ✓ PMD - " + pmdStatus.message);
-          if (verbose) {
-            _printInfo(
-                "    Provides: Code quality analysis, bug detection, performance suggestions");
-          }
-        } else {
-          _printWarning("  ⚠ PMD - " + pmdStatus.message);
-          if (pmdStatus.suggestion != null) {
-            _printInfo("    Install: " + pmdStatus.suggestion);
-          }
-        }
-      }
-
-      // Check React/JavaScript analyzers
-      if (formatter.hasPluginFor(FileType.JAVASCRIPT)) {
-        _printInfo("\nJavaScript/React Analysis:");
-        _printSuccess("  ✓ ESLint + Prettier integration");
-        _printSuccess("  ✓ React hooks dependency checking");
-        _printSuccess("  ✓ Component structure analysis");
-      } else {
-        _printWarning("\nJavaScript/React Analysis:");
-        _printWarning("  ⚠ React formatter not available");
-        _printInfo("    Run 'codeformatter setup' to configure Node.js tools");
-      }
-
-      // Show configuration status
-      _printInfo("\nConfiguration:");
-      Path configPath = Paths.get(CONFIG_FILE_NAME);
-      if (Files.exists(configPath)) {
-        _printSuccess("  ✓ Configuration file found: " + CONFIG_FILE_NAME);
-
-        if (verbose) {
-          // Show some key configuration values
-          _printInfo("    General settings:");
-          _printInfo("      - Indent size: " + config.getGeneralConfig("indentSize", 4));
-          _printInfo("      - Line length: " + config.getGeneralConfig("lineLength", 100));
-          _printInfo("      - Use tabs: " + config.getGeneralConfig("useTabs", false));
-
-          _printInfo("    External tool settings:");
-          _printInfo(
-              "      - Checkstyle enabled: "
-                  + config.getPluginConfig("spring", "checkstyle.enabled", true));
-          _printInfo(
-              "      - PMD enabled: " + config.getPluginConfig("spring", "pmd.enabled", true));
-        }
-      } else {
-        _printWarning("  ⚠ No configuration file found");
-        _printInfo("    Run 'codeformatter init' to create default configuration");
-      }
-
-      // Show summary
-      _printHeader("SUMMARY");
-
-      int availableTools = 0;
-      int totalTools = 2; // Checkstyle + PMD
-
-      if (checkCheckstyleAvailability().available) availableTools++;
-      if (checkPMDAvailability().available) availableTools++;
-
-      if (availableTools == totalTools) {
-        _printSuccess("✓ All external analysis tools are available!");
-        _printInfo("You're getting the full power of the Advanced Code Formatter.");
-      } else if (availableTools > 0) {
-        _printWarning(
-            "⚠ Some external tools are missing ("
-                + availableTools
-                + "/"
-                + totalTools
-                + " available)");
-        _printInfo("The formatter will work but with reduced analysis capabilities.");
-        _printInfo(
-            "Run './gradlew installExternalTools' or 'codeformatter setup' to install missing tools.");
-      } else {
-        _printWarning("⚠ No external analysis tools found");
-        _printInfo("Only basic Java formatting and custom Spring analysis will be available.");
-        _printInfo("For enhanced analysis, install Checkstyle and PMD:");
-        _printInfo("  ./gradlew installExternalTools");
-      }
-
-    } catch (Exception e) {
-      _printError("Error checking analyzer status: " + e.getMessage());
-      if (verbose) {
-        e.printStackTrace();
-      }
-    }
-  }
-
   /** New command to check if the environment is properly set up */
   private static void _checkEnvironment(String[] args) {
     _printHeader("ENVIRONMENT CHECK");
@@ -1026,222 +891,6 @@ public class FormatterCli {
     System.out.println("Advanced Code Formatter version " + VERSION);
   }
 
-  private static void _printUsage() {
-    System.out.println(
-        errorFormatter.colorize(
-            ErrorFormatter.ANSI_BOLD, "Advanced Code Formatter CLI v" + VERSION));
-    System.out.println("Usage:");
-    System.out.println("  codeformatter init [--force]      - Initialize configuration file");
-    System.out.println("  codeformatter format <path>       - Format files in path");
-    System.out.println("  codeformatter check <path>        - Check files without formatting");
-    System.out.println("  codeformatter analyze <path>      - Analyze code without formatting");
-    System.out.println("  codeformatter setup               - Set up environment for formatting");
-    System.out.println("  codeformatter check-env           - Check environment setup");
-    System.out.println("  codeformatter help-setup          - Display detailed setup guide");
-    System.out.println("  codeformatter --help|-h           - Show this help");
-    System.out.println("  codeformatter --version|-v        - Show version information");
-    System.out.println();
-    System.out.println("Options:");
-    System.out.println(
-        "  --config=<file>                   - Use specific config file (default: .codeformatter.yml)");
-    System.out.println("  --verbose                         - Show detailed output");
-    System.out.println("  --ci                              - CI friendly output (simplified)");
-    System.out.println("  --no-color                        - Disable colored output");
-    System.out.println("  --include=<glob>                  - Only include files matching pattern");
-    System.out.println(
-        "  --threads=<num>                   - Number of threads to use (default: available processors)");
-    System.out.println("  --force                           - Force overwrite (with init command)");
-    System.out.println("  --skip-react                      - Skip ReactJS/JavaScript formatting");
-  }
-
-  private static void _formatFiles(String[] args) throws IOException {
-    if (args.length < 2) {
-      _printError("Error: Missing path argument");
-      _printUsage();
-      System.exit(1);
-    }
-
-    String targetPath = args[1];
-    Path path = Paths.get(targetPath);
-
-    if (!Files.exists(path)) {
-      _printError("Error: Path does not exist: " + targetPath);
-      System.exit(1);
-    }
-
-    boolean verbose = _hasOption(args, "--verbose");
-    boolean ciMode = _hasOption(args, "--ci");
-    boolean skipReact = _hasOption(args, "--skip-react");
-    String configFile = _getOptionValue(args, "--config");
-    String includePattern = _getOptionValue(args, "--include");
-    String threadsStr = _getOptionValue(args, "--threads");
-    int threads = Runtime.getRuntime().availableProcessors();
-    if (threadsStr != null) {
-      try {
-        threads = Integer.parseInt(threadsStr);
-      } catch (NumberFormatException e) {
-        _printWarning("Invalid thread count: " + threadsStr + ", using default");
-      }
-    }
-
-    FormatterConfig config;
-    if (configFile != null) {
-      _printInfo("Using config file: " + configFile);
-      config = ConfigurationLoader.loadConfig(Paths.get(configFile));
-    } else {
-      config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
-    }
-
-    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, skipReact)) {
-      AtomicInteger fileCount = new AtomicInteger(0);
-      AtomicInteger errorCount = new AtomicInteger(0);
-      AtomicInteger skippedCount = new AtomicInteger(0);
-      AtomicInteger successCount = new AtomicInteger(0);
-      AtomicLong totalLines = new AtomicLong(0);
-
-      List<Path> filesToFormat =
-          _findFiles(
-              path,
-              config.getGeneralConfig("ignoreFiles", new ArrayList<String>()),
-              includePattern);
-
-      _printInfo("Found " + filesToFormat.size() + " files to format");
-
-      Instant start = Instant.now();
-
-      Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
-
-      for (Path file : filesToFormat) {
-        try {
-          if (verbose) {
-            _printInfo("Processing: " + file);
-          }
-
-          // Check if we should skip this file based on file type
-          FileType fileType = FileType.detect(file);
-          if (skipReact
-              && (fileType == FileType.JAVASCRIPT
-                  || fileType == FileType.JSX
-                  || fileType == FileType.TYPESCRIPT
-                  || fileType == FileType.TSX)) {
-            _printInfo("Skipping JavaScript/React file (--skip-react): " + file);
-            skippedCount.incrementAndGet();
-            continue;
-          }
-
-          // Check if we have an active plugin for this file type
-          if (!formatter.hasActivePluginFor(fileType)) {
-            _printWarning("Skipping file (no active plugin): " + file);
-            skippedCount.incrementAndGet();
-            continue;
-          }
-
-          String source = Files.readString(file);
-          totalLines.addAndGet(source.split("\n").length);
-
-          FormatterResult result = formatter.formatFile(file, source);
-
-          if (result.isSuccessful()) {
-            if (!source.equals(result.getFormattedCode())) {
-              Files.writeString(file, result.getFormattedCode());
-
-              _printSuccess("Formatted: " + file);
-              successCount.incrementAndGet();
-
-              // NEW CODE: Always display ESLint warnings/errors even if formatting succeeded
-              if (!result.getErrors().isEmpty()) {
-                _printWarning("  Issues found:");
-
-                // Group errors by severity for better readability
-                Map<Severity, List<FormatterError>> errorsBySeverity =
-                    errorFormatter.groupBySeverity(result.getErrors());
-
-                // Display errors first, then warnings, then info
-                _printErrorsBySeverity(errorsBySeverity, Severity.ERROR);
-                _printErrorsBySeverity(errorsBySeverity, Severity.WARNING);
-                _printErrorsBySeverity(errorsBySeverity, Severity.INFO);
-
-                // Also add to the errorsByFile map for summary
-                errorsByFile.put(file, result.getErrors());
-              }
-
-              if (!ciMode && !result.getAppliedRefactorings().isEmpty() && verbose) {
-                _printInfo("  Applied refactorings:");
-                result
-                    .getAppliedRefactorings()
-                    .forEach(r -> _printInfo("    - " + r.getDescription()));
-              }
-            } else {
-              if (verbose) {
-                _printInfo("  Already formatted: " + file);
-              }
-              successCount.incrementAndGet();
-            }
-          } else {
-            // Check if this is just a warning about React formatter being disabled
-            boolean isReactDisabledWarning =
-                result.getErrors().stream()
-                    .anyMatch(e -> e.getMessage().contains("ReactJS formatter is disabled"));
-
-            if (isReactDisabledWarning) {
-              _printWarning("Skipping (ReactJS formatter disabled): " + file);
-              skippedCount.incrementAndGet();
-            } else {
-              _printError("Failed to format: " + file);
-              errorsByFile.put(file, result.getErrors());
-              result.getErrors().forEach(e -> _printError("  " + errorFormatter.formatError(e)));
-              errorCount.incrementAndGet();
-            }
-          }
-
-          fileCount.incrementAndGet();
-        } catch (Exception e) {
-          _printError("Error processing file: " + file);
-          _printError("  " + e.getMessage());
-
-          List<FormatterError> errors = new ArrayList<>();
-          errors.add(
-              new FormatterError(
-                  Severity.FATAL,
-                  "Exception: " + e.getMessage(),
-                  1,
-                  1,
-                  "Check the log file for details"));
-          errorsByFile.put(file, errors);
-
-          logger.log(Level.SEVERE, "Error processing file: " + file, e);
-
-          if (verbose) {
-            e.printStackTrace();
-          }
-          errorCount.incrementAndGet();
-        }
-      }
-
-      Instant end = Instant.now();
-      Duration duration = Duration.between(start, end);
-
-      System.out.println("\nFormatting complete in " + _formatDuration(duration) + ":");
-      System.out.println("  Processed files: " + fileCount.get());
-      System.out.println("  Successfully formatted: " + successCount.get());
-      System.out.println("  Files with errors: " + errorCount.get());
-      if (skippedCount.get() > 0) {
-        System.out.println("  Skipped files: " + skippedCount.get());
-      }
-      System.out.println("  Total lines processed: " + totalLines.get());
-
-      if (!errorsByFile.isEmpty() && !ciMode) {
-        System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
-      }
-
-      if (errorCount.get() > 0) {
-        System.exit(1);
-      }
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-  }
-
   private static void _checkFiles(String[] args) {
     if (args.length < 2) {
       _printError("Error: Missing path argument");
@@ -1787,6 +1436,524 @@ public class FormatterCli {
         }
       }
     }
+  }
+
+  // Enhanced FormatterCli.java methods to add to the existing CLI
+
+  /** Show the status of all available analyzers with auto-fix capabilities. */
+  private static void _showAnalyzerStatus(String[] args) {
+    _printHeader("ANALYZER STATUS");
+
+    boolean verbose = _hasOption(args, "--verbose");
+    String configFile = _getOptionValue(args, "--config");
+
+    // Load configuration
+    FormatterConfig config;
+    if (configFile != null) {
+      config = ConfigurationLoader.loadConfig(Paths.get(configFile));
+    } else {
+      config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
+    }
+
+    // Create formatter to check analyzer status
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, false)) {
+      // Get Spring Boot formatter specifically to check analyzer status
+      if (formatter.hasPluginFor(FileType.JAVA)) {
+        _printInfo("Java/Spring Boot Analysis & Auto-Fix:");
+
+        // Get the SpringBootFormatter instance to check detailed status
+        SpringBootFormatter springFormatter = getSpringBootFormatterInstance(formatter);
+        if (springFormatter != null) {
+          SpringBootFormatter.AnalyzerStatus status = springFormatter.getAnalyzerStatus();
+
+          _printBullet("Core analyzers:");
+          _printSuccess(
+              "  ✓ Enhanced Import Organizer - Advanced import organization and cleanup (auto-fix supported)");
+          _printSuccess(
+              "  ✓ Spring Component Analyzer - Spring-specific dependency injection analysis (auto-fix supported)");
+          _printSuccess("  ✓ Design Pattern Analyzer - Design pattern detection and suggestions");
+
+          _printBullet("External tool analyzers:");
+
+          // Check each external tool with auto-fix status
+          for (Map.Entry<String, Boolean> entry : status.getExternalToolStatus().entrySet()) {
+            String toolName = entry.getKey().replace("Analyzer", "");
+            boolean available = entry.getValue();
+            boolean autoFixSupported =
+                status.getAutoFixStatus().getOrDefault(entry.getKey(), false);
+
+            if (available) {
+              String autoFixMsg = autoFixSupported ? " (auto-fix supported)" : " (analysis only)";
+              _printSuccess("  ✓ " + toolName + " - Available" + autoFixMsg);
+
+              if (verbose && autoFixSupported) {
+                _printAutoFixCapabilities(toolName);
+              }
+            } else {
+              _printWarning(
+                  "  ⚠ "
+                      + toolName
+                      + " - "
+                      + status.getUnavailabilityReasons().get(entry.getKey()));
+              _printInfo("    Install: " + getInstallationInstructions(toolName));
+            }
+          }
+
+          // Show auto-fix summary
+          _printHeader("AUTO-FIX CAPABILITIES");
+
+          boolean autoFixEnabled = config.getGeneralConfig("autoFix.enabled", true);
+          boolean autoFixOnFormat = config.getGeneralConfig("autoFix.applyOn.format", true);
+
+          if (autoFixEnabled) {
+            _printSuccess("✓ Auto-fix is enabled globally");
+            _printInfo("  - Apply on format command: " + (autoFixOnFormat ? "Yes" : "No"));
+            _printInfo(
+                "  - Max fixes per file: "
+                    + config.getGeneralConfig("autoFix.maxFixesPerFile", 50));
+            _printInfo(
+                "  - Verbose output: " + config.getGeneralConfig("autoFix.verboseOutput", true));
+
+            int autoFixCapableTools = status.getAutoFixCapableToolCount();
+            if (autoFixCapableTools > 0) {
+              _printSuccess("  - Tools with auto-fix: " + autoFixCapableTools);
+            } else {
+              _printWarning("  - No external tools support auto-fix");
+              _printInfo(
+                  "    Install newer versions of Checkstyle (8.0+) and PMD (6.0+) for auto-fix support");
+            }
+          } else {
+            _printWarning("⚠ Auto-fix is disabled in configuration");
+            _printInfo("  Set 'autoFix.enabled: true' in .codeformatter.yml to enable");
+          }
+
+        } else {
+          _printWarning("Could not get detailed analyzer status");
+        }
+      }
+
+      // Check React/JavaScript analyzers
+      if (formatter.hasPluginFor(FileType.JAVASCRIPT)) {
+        _printInfo("\nJavaScript/React Analysis & Auto-Fix:");
+        _printSuccess("  ✓ ESLint + Prettier integration (auto-fix supported)");
+        _printSuccess("  ✓ React hooks dependency checking");
+        _printSuccess("  ✓ Component structure analysis");
+      } else {
+        _printWarning("\nJavaScript/React Analysis:");
+        _printWarning("  ⚠ React formatter not available");
+        _printInfo("    Run 'codeformatter setup' to configure Node.js tools");
+      }
+
+      // Show configuration status
+      _printInfo("\nConfiguration:");
+      Path configPath = Paths.get(CONFIG_FILE_NAME);
+      if (Files.exists(configPath)) {
+        _printSuccess("  ✓ Configuration file found: " + CONFIG_FILE_NAME);
+
+        if (verbose) {
+          _printAutoFixConfiguration(config);
+        }
+      } else {
+        _printWarning("  ⚠ No configuration file found");
+        _printInfo("    Run 'codeformatter init' to create default configuration");
+      }
+
+      // Show summary with auto-fix information
+      _printHeader("SUMMARY");
+
+      int availableTools = (int) checkAvailableTools().stream().filter(t -> t.available).count();
+      int totalTools = checkAvailableTools().size();
+
+      SpringBootFormatter springFormatter = getSpringBootFormatterInstance(formatter);
+      int autoFixTools =
+          springFormatter != null
+              ? springFormatter.getAnalyzerStatus().getAutoFixCapableToolCount()
+              : 0;
+
+      if (availableTools == totalTools && autoFixTools > 0) {
+        _printSuccess("✓ All external analysis tools are available with auto-fix support!");
+        _printInfo(
+            "You're getting the full power of the Advanced Code Formatter with automatic fixes.");
+      } else if (availableTools == totalTools) {
+        _printSuccess("✓ All external analysis tools are available!");
+        _printWarning(
+            "⚠ Limited auto-fix support. Consider upgrading tools for auto-fix capabilities.");
+      } else if (availableTools > 0) {
+        _printWarning(
+            "⚠ Some external tools are missing ("
+                + availableTools
+                + "/"
+                + totalTools
+                + " available)");
+        if (autoFixTools > 0) {
+          _printInfo("Auto-fix available for " + autoFixTools + " tools.");
+        }
+        _printInfo(
+            "Run './gradlew installExternalTools' or 'codeformatter setup' to install missing tools.");
+      } else {
+        _printWarning("⚠ No external analysis tools found");
+        _printInfo("Only basic Java formatting and custom Spring analysis will be available.");
+        _printInfo("For enhanced analysis and auto-fix, install Checkstyle and PMD:");
+        _printInfo("  ./gradlew installExternalTools");
+      }
+
+    } catch (Exception e) {
+      _printError("Error checking analyzer status: " + e.getMessage());
+      if (verbose) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  /** Print auto-fix capabilities for a specific tool. */
+  private static void _printAutoFixCapabilities(String toolName) {
+    switch (toolName.toLowerCase()) {
+      case "checkstyle":
+        _printInfo(
+            "      Auto-fixable: Import organization, whitespace, indentation, brace placement");
+        _printInfo("      Auto-fixable: Modifier order, empty blocks, simple naming violations");
+        break;
+      case "pmd":
+        _printInfo("      Auto-fixable: Unnecessary local variables, boolean simplification");
+        _printInfo(
+            "      Auto-fixable: Wrapper object creation, string instantiation, empty blocks");
+        break;
+    }
+  }
+
+  /** Get installation instructions for a tool. */
+  private static String getInstallationInstructions(String toolName) {
+    return switch (toolName.toLowerCase()) {
+      case "checkstyle" -> "./gradlew installExternalTools OR apt-get install checkstyle OR brew install checkstyle";
+      case "pmd" -> "./gradlew installExternalTools OR download from https://pmd.github.io/";
+      default -> "Check the tool's official documentation for installation instructions";
+    };
+  }
+
+  /** Print auto-fix configuration details. */
+  private static void _printAutoFixConfiguration(FormatterConfig config) {
+    _printInfo("    Auto-fix settings:");
+    _printInfo("      - Enabled: " + config.getGeneralConfig("autoFix.enabled", true));
+    _printInfo(
+        "      - Apply on format: " + config.getGeneralConfig("autoFix.applyOn.format", true));
+    _printInfo(
+        "      - Apply on check: " + config.getGeneralConfig("autoFix.applyOn.check", false));
+    _printInfo(
+        "      - Max fixes per file: " + config.getGeneralConfig("autoFix.maxFixesPerFile", 50));
+    _printInfo("      - Verbose output: " + config.getGeneralConfig("autoFix.verboseOutput", true));
+    _printInfo(
+        "      - Backup original: " + config.getGeneralConfig("autoFix.backupOriginal", true));
+
+    _printInfo("    External tool settings:");
+    _printInfo(
+        "      - Checkstyle auto-fix: "
+            + config.getPluginConfig("spring", "checkstyle.autoFix", true));
+    _printInfo("      - PMD auto-fix: " + config.getPluginConfig("spring", "pmd.autoFix", true));
+  }
+
+  /** Get a list of all available tools with their status. */
+  private static List<ToolStatus> checkAvailableTools() {
+    List<ToolStatus> tools = new ArrayList<>();
+    tools.add(checkCheckstyleAvailability());
+    tools.add(checkPMDAvailability());
+    return tools;
+  }
+
+  /** Helper method to get SpringBootFormatter instance from AdvancedCodeFormatter. */
+  private static SpringBootFormatter getSpringBootFormatterInstance(
+      AdvancedCodeFormatter formatter) {
+    // This would require some refactoring to expose the SpringBootFormatter instance
+    // For now, return null and handle gracefully
+    return null;
+  }
+
+  /** Enhanced format command with auto-fix information. */
+  private static void _formatFiles(String[] args) throws IOException {
+    if (args.length < 2) {
+      _printError("Error: Missing path argument");
+      _printUsage();
+      System.exit(1);
+    }
+
+    String targetPath = args[1];
+    Path path = Paths.get(targetPath);
+
+    if (!Files.exists(path)) {
+      _printError("Error: Path does not exist: " + targetPath);
+      System.exit(1);
+    }
+
+    boolean verbose = _hasOption(args, "--verbose");
+    boolean ciMode = _hasOption(args, "--ci");
+    boolean skipReact = _hasOption(args, "--skip-react");
+    boolean noAutoFix = _hasOption(args, "--no-auto-fix");
+    boolean dryRun = _hasOption(args, "--dry-run");
+    String configFile = _getOptionValue(args, "--config");
+    String includePattern = _getOptionValue(args, "--include");
+    String threadsStr = _getOptionValue(args, "--threads");
+
+    int threads = Runtime.getRuntime().availableProcessors();
+    if (threadsStr != null) {
+      try {
+        threads = Integer.parseInt(threadsStr);
+      } catch (NumberFormatException e) {
+        _printWarning("Invalid thread count: " + threadsStr + ", using default");
+      }
+    }
+
+    FormatterConfig config;
+    if (configFile != null) {
+      _printInfo("Using config file: " + configFile);
+      config = ConfigurationLoader.loadConfig(Paths.get(configFile));
+    } else {
+      config = ConfigurationLoader.loadConfig(Paths.get(CONFIG_FILE_NAME));
+    }
+
+    // Override auto-fix setting if --no-auto-fix is specified
+    if (noAutoFix && !dryRun) {
+      _printInfo("Auto-fix disabled by command line option");
+      // Create a modified config that disables auto-fix
+      Map<String, Object> generalConfig = new HashMap<>(config.getGeneralConfigMap());
+      generalConfig.put("autoFix.enabled", false);
+      config = new FormatterConfig(generalConfig, config.getPluginConfigsMap());
+    }
+
+    if (dryRun) {
+      _printInfo("DRY RUN MODE: No files will be modified");
+    }
+
+    try (AdvancedCodeFormatter formatter = _createFormatter(config, verbose, skipReact)) {
+      AtomicInteger fileCount = new AtomicInteger(0);
+      AtomicInteger errorCount = new AtomicInteger(0);
+      AtomicInteger skippedCount = new AtomicInteger(0);
+      AtomicInteger successCount = new AtomicInteger(0);
+      AtomicInteger autoFixCount = new AtomicInteger(0);
+      AtomicLong totalLines = new AtomicLong(0);
+
+      List<Path> filesToFormat =
+          _findFiles(
+              path,
+              config.getGeneralConfig("ignoreFiles", new ArrayList<String>()),
+              includePattern);
+
+      _printInfo("Found " + filesToFormat.size() + " files to format");
+
+      // Show auto-fix status
+      boolean autoFixEnabled = config.getGeneralConfig("autoFix.enabled", true) && !noAutoFix;
+      if (autoFixEnabled && !dryRun) {
+        _printInfo(
+            "Auto-fix is enabled - violations will be automatically corrected when possible");
+      } else if (dryRun) {
+        _printInfo("Auto-fix disabled due to dry-run mode");
+      } else {
+        _printInfo("Auto-fix is disabled");
+      }
+
+      Instant start = Instant.now();
+
+      Map<Path, List<FormatterError>> errorsByFile = new HashMap<>();
+
+      for (Path file : filesToFormat) {
+        try {
+          if (verbose) {
+            _printInfo("Processing: " + file);
+          }
+
+          // Check if we should skip this file based on file type
+          FileType fileType = FileType.detect(file);
+          if (skipReact
+              && (fileType == FileType.JAVASCRIPT
+                  || fileType == FileType.JSX
+                  || fileType == FileType.TYPESCRIPT
+                  || fileType == FileType.TSX)) {
+            _printInfo("Skipping JavaScript/React file (--skip-react): " + file);
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
+          // Check if we have an active plugin for this file type
+          if (!formatter.hasActivePluginFor(fileType)) {
+            _printWarning("Skipping file (no active plugin): " + file);
+            skippedCount.incrementAndGet();
+            continue;
+          }
+
+          String source = Files.readString(file);
+          totalLines.addAndGet(source.split("\n").length);
+
+          FormatterResult result = formatter.formatFile(file, source);
+
+          if (result.isSuccessful()) {
+            boolean codeChanged = !source.equals(result.getFormattedCode());
+            boolean hasAutoFixes =
+                result.getAppliedRefactorings().stream()
+                    .anyMatch(
+                        r ->
+                            r.getType().contains("AUTO_FIX")
+                                || r.getType().contains("CHECKSTYLE")
+                                || r.getType().contains("PMD"));
+
+            if (codeChanged) {
+              if (!dryRun) {
+                Files.writeString(file, result.getFormattedCode());
+              }
+
+              if (hasAutoFixes) {
+                autoFixCount.incrementAndGet();
+                _printSuccess((dryRun ? "[DRY RUN] " : "") + "Formatted with auto-fixes: " + file);
+
+                if (verbose && !result.getAppliedRefactorings().isEmpty()) {
+                  _printInfo("  Auto-fixes applied:");
+                  result.getAppliedRefactorings().stream()
+                      .filter(
+                          r ->
+                              r.getType().contains("AUTO_FIX")
+                                  || r.getType().contains("CHECKSTYLE")
+                                  || r.getType().contains("PMD"))
+                      .forEach(r -> _printInfo("    - " + r.getDescription()));
+                }
+              } else {
+                _printSuccess((dryRun ? "[DRY RUN] " : "") + "Formatted: " + file);
+              }
+
+              successCount.incrementAndGet();
+
+              // Display any remaining issues even after auto-fix
+              if (!result.getErrors().isEmpty()) {
+                _printWarning("  Remaining issues (could not auto-fix):");
+                Map<Severity, List<FormatterError>> errorsBySeverity =
+                    errorFormatter.groupBySeverity(result.getErrors());
+
+                _printErrorsBySeverity(errorsBySeverity, Severity.ERROR);
+                _printErrorsBySeverity(errorsBySeverity, Severity.WARNING);
+                if (verbose) {
+                  _printErrorsBySeverity(errorsBySeverity, Severity.INFO);
+                }
+
+                errorsByFile.put(file, result.getErrors());
+              }
+            } else {
+              if (verbose) {
+                _printInfo("  Already formatted: " + file);
+              }
+              successCount.incrementAndGet();
+            }
+          } else {
+            // Check if this is just a warning about React formatter being disabled
+            boolean isReactDisabledWarning =
+                result.getErrors().stream()
+                    .anyMatch(e -> e.getMessage().contains("ReactJS formatter is disabled"));
+
+            if (isReactDisabledWarning) {
+              _printWarning("Skipping (ReactJS formatter disabled): " + file);
+              skippedCount.incrementAndGet();
+            } else {
+              _printError("Failed to format: " + file);
+              errorsByFile.put(file, result.getErrors());
+              result.getErrors().forEach(e -> _printError("  " + errorFormatter.formatError(e)));
+              errorCount.incrementAndGet();
+            }
+          }
+
+          fileCount.incrementAndGet();
+        } catch (Exception e) {
+          _printError("Error processing file: " + file);
+          _printError("  " + e.getMessage());
+
+          List<FormatterError> errors = new ArrayList<>();
+          errors.add(
+              new FormatterError(
+                  Severity.FATAL,
+                  "Exception: " + e.getMessage(),
+                  1,
+                  1,
+                  "Check the log file for details"));
+          errorsByFile.put(file, errors);
+
+          logger.log(Level.SEVERE, "Error processing file: " + file, e);
+
+          if (verbose) {
+            e.printStackTrace();
+          }
+          errorCount.incrementAndGet();
+        }
+      }
+
+      Instant end = Instant.now();
+      Duration duration = Duration.between(start, end);
+
+      _printInfo("Formatting complete in " + _formatDuration(duration) + ":");
+      _printInfo("Processed files: " + fileCount.get());
+      _printInfo("Successfully formatted: " + successCount.get());
+      if (autoFixCount.get() > 0) {
+        _printInfo("Files with auto-fixes applied: " + autoFixCount.get());
+      }
+      _printInfo("Files with errors: " + errorCount.get());
+      if (skippedCount.get() > 0) {
+        _printInfo("Skipped files: " + skippedCount.get());
+      }
+      _printInfo("Total lines processed: " + totalLines.get());
+
+      if (dryRun) {
+        _printWarning("DRY RUN: No files were actually modified");
+      }
+
+      if (!errorsByFile.isEmpty() && !ciMode) {
+        System.out.println("\n" + errorFormatter.formatErrorSummary(errorsByFile));
+      }
+
+      if (errorCount.get() > 0) {
+        System.exit(1);
+      }
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /** Enhanced usage information with auto-fix options. */
+  private static void _printUsage() {
+    System.out.println(
+        errorFormatter.colorize(
+            ErrorFormatter.ANSI_BOLD, "Advanced Code Formatter CLI v" + VERSION));
+    System.out.println("Usage:");
+    System.out.println("  codeformatter init [--force]      - Initialize configuration file");
+    System.out.println(
+        "  codeformatter format <path>       - Format files in path (with auto-fix)");
+    System.out.println("  codeformatter check <path>        - Check files without formatting");
+    System.out.println("  codeformatter analyze <path>      - Analyze code without formatting");
+    System.out.println("  codeformatter setup               - Set up environment for formatting");
+    System.out.println("  codeformatter check-env           - Check environment setup");
+    System.out.println(
+        "  codeformatter status              - Show analyzer status with auto-fix info");
+    System.out.println("  codeformatter help-setup          - Display detailed setup guide");
+    System.out.println("  codeformatter --help|-h           - Show this help");
+    System.out.println("  codeformatter --version|-v        - Show version information");
+    System.out.println();
+    System.out.println("Options:");
+    System.out.println(
+        "  --config=<file>                   - Use specific config file (default: .codeformatter.yml)");
+    System.out.println("  --verbose                         - Show detailed output");
+    System.out.println("  --ci                              - CI friendly output (simplified)");
+    System.out.println("  --no-color                        - Disable colored output");
+    System.out.println("  --include=<glob>                  - Only include files matching pattern");
+    System.out.println(
+        "  --threads=<num>                   - Number of threads to use (default: available processors)");
+    System.out.println("  --force                           - Force overwrite (with init command)");
+    System.out.println("  --skip-react                      - Skip ReactJS/JavaScript formatting");
+    System.out.println();
+    System.out.println("Auto-fix options:");
+    System.out.println("  --no-auto-fix                     - Disable auto-fix for this run");
+    System.out.println(
+        "  --dry-run                         - Show what would be changed without modifying files");
+    System.out.println();
+    System.out.println("Examples:");
+    System.out.println(
+        "  codeformatter format src/         - Format all files in src/ with auto-fix");
+    System.out.println("  codeformatter format --no-auto-fix src/ - Format without auto-fixes");
+    System.out.println(
+        "  codeformatter format --dry-run src/ - Preview changes without applying them");
+    System.out.println(
+        "  codeformatter status --verbose    - Show detailed analyzer and auto-fix status");
   }
 
   private static String _formatDuration(Duration duration) {

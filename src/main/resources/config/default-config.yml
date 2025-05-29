@@ -1,4 +1,4 @@
-# Advanced Code Formatter Configuration with Hybrid Architecture
+# Advanced Code Formatter Configuration with Hybrid Architecture and Auto-Fix Support
 
 general:
   indentSize: 4
@@ -24,16 +24,33 @@ plugins:
     # Dependency injection style
     enforceDependencyInjection: constructor
 
-    # External tool configurations
+    # External tool configurations with auto-fix support
     checkstyle:
       enabled: true
+      autoFix: true  # Enable auto-fix for Checkstyle violations
       configFile: null  # Use default if null, or path to custom checkstyle.xml
       severity: warning # error, warning, info
+      # Auto-fixable rules (these will be automatically fixed when possible):
+      # - Import organization and unused imports
+      # - Whitespace and indentation issues
+      # - Modifier order
+      # - Empty blocks and statements
+      # - Brace placement
+      # - Simple naming violations
 
     pmd:
       enabled: true
+      autoFix: true  # Enable auto-fix for PMD violations
       ruleSet: "rulesets/java/quickstart.xml"  # PMD ruleset to use
       severity: warning
+      # Auto-fixable rules (these will be automatically fixed when possible):
+      # - UnnecessaryLocalBeforeReturn
+      # - SimplifyBooleanReturns
+      # - BooleanInstantiation -> Boolean.TRUE/FALSE
+      # - StringInstantiation -> string literals
+      # - UnnecessaryWrapperObjectCreation -> valueOf() calls
+      # - EmptyBlock -> add TODO comments
+      # - Simple code improvements
 
     # Enhanced import organization
     importOrganization:
@@ -69,14 +86,55 @@ plugins:
         - internal
         - css
 
+# Auto-fix configuration
+autoFix:
+  # Global auto-fix settings
+  enabled: true  # Master switch for all auto-fix functionality
+
+  # Safety settings
+  backupOriginal: true  # Create backup files before applying fixes
+  maxFixesPerFile: 50   # Maximum number of fixes to apply per file (safety limit)
+
+  # External tool auto-fix priorities (lower number = higher priority)
+  priorities:
+    checkstyle: 1  # Run Checkstyle fixes first (style and formatting)
+    pmd: 2        # Run PMD fixes second (code quality)
+    custom: 3     # Run custom analyzer fixes last (Spring-specific)
+
+  # Rules for when to apply auto-fixes
+  applyOn:
+    format: true   # Apply auto-fixes when running 'format' command
+    check: false   # Don't apply auto-fixes when running 'check' command (analysis only)
+    analyze: false # Don't apply auto-fixes when running 'analyze' command
+
+  # Confirmation settings
+  requireConfirmation: false  # Set to true to prompt before applying fixes
+  verboseOutput: true        # Show detailed information about applied fixes
+
 # External tool installation paths (optional - tools will be auto-detected)
 externalTools:
   checkstyle:
-  # Uncomment and set if Checkstyle is not in PATH
-  # commandPath: "/usr/local/bin/checkstyle"
-  # jarPath: "/path/to/checkstyle.jar"
+    # Uncomment and set if Checkstyle is not in PATH
+    # commandPath: "/usr/local/bin/checkstyle"
+    # jarPath: "/path/to/checkstyle.jar"
+
+    # Auto-fix specific settings
+    autoFixSupported: true  # Whether this installation supports auto-fix
+    minVersionForAutoFix: "8.0"  # Minimum version that supports auto-fix
 
   pmd:
-  # Uncomment and set if PMD is not in PATH
-  # commandPath: "/usr/local/bin/pmd"
-  # homeDirectory: "/path/to/pmd"
+    # Uncomment and set if PMD is not in PATH
+    # commandPath: "/usr/local/bin/pmd"
+    # homeDirectory: "/path/to/pmd"
+
+    # Auto-fix specific settings
+    autoFixSupported: true  # Whether this installation supports auto-fix
+    minVersionForAutoFix: "6.0"  # Minimum version that supports auto-fix
+
+# Logging configuration for auto-fix operations
+logging:
+  autoFix:
+    enabled: true
+    level: INFO  # DEBUG, INFO, WARN, ERROR
+    logFixesApplied: true  # Log each fix that was applied
+    logFixesFailed: true   # Log fixes that failed to apply

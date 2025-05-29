@@ -172,7 +172,9 @@ async function processWithESLint(code, isReact) {
       else if (msg.suggestions && msg.suggestions.length > 0) {
         suggestion =
           msg.suggestions[0].desc ||
-          `Suggested fix: ${msg.suggestions[0].messageId || 'Apply ESLint suggestion'}`;
+          `Suggested fix: ${
+            msg.suggestions[0].messageId || 'Apply ESLint suggestion'
+          }`;
       }
       // For common rules, extract from the message or use common patterns
       else {
@@ -190,7 +192,9 @@ async function processWithESLint(code, isReact) {
         line: msg.line || 1,
         column: msg.column || 1,
         suggestion,
-        fixable: msg.fix !== undefined || (msg.suggestions && msg.suggestions.length > 0),
+        fixable:
+          msg.fix !== undefined ||
+          (msg.suggestions && msg.suggestions.length > 0),
       };
     });
 
@@ -377,7 +381,9 @@ app.post('/analyze', async (req, res) => {
 // Try to start server with port handling
 console.log(`Attempting to start server on port ${port}...`);
 const server = app.listen(port, () => {
-  console.log(`Server listening on port ${port} with ESLint+Prettier integration`);
+  console.log(
+    `Server listening on port ${port} with ESLint+Prettier integration`
+  );
 });
 
 // Handle server startup errors

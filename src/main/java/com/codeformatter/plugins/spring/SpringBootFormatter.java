@@ -26,12 +26,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
- * Enhanced Spring Boot code formatter with hybrid architecture.
+ * Enhanced Spring Boot code formatter with hybrid architecture and external tool auto-fix
+ * integration.
  *
  * <p>Combines industry-standard tools (Checkstyle, PMD) with custom Spring-specific analyzers for
- * comprehensive code analysis and formatting.
+ * comprehensive code analysis and formatting. Supports automatic fixing of violations when
+ * possible.
  */
 public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
   private static final Logger logger = LoggerUtil.getLogger(SpringBootFormatter.class);
@@ -50,9 +53,18 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
   private static final int MAX_CACHE_SIZE = 500;
   private static final int CACHE_CLEANUP_THRESHOLD = 600;
 
+  // Auto-fix configuration
+  private boolean autoFixEnabled;
+  private boolean autoFixOnFormat;
+  private int maxFixesPerFile;
+  private boolean verboseAutoFix;
+
   @Override
   public void initialize(FormatterConfig config) {
     this.config = config;
+
+    // Initialize auto-fix configuration
+    initializeAutoFixConfig();
 
     // Initialize printer configuration
     setupPrinterConfiguration();
@@ -65,7 +77,24 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
             + externalAnalyzers.size()
             + " external tools + "
             + customAnalyzers.size()
-            + " custom analyzers");
+            + " custom analyzers"
+            + (autoFixEnabled ? " (auto-fix enabled)" : ""));
+  }
+
+  /** Initialize auto-fix configuration. */
+  private void initializeAutoFixConfig() {
+    autoFixEnabled = config.getGeneralConfig("autoFix.enabled", true);
+    autoFixOnFormat = config.getGeneralConfig("autoFix.applyOn.format", true);
+    maxFixesPerFile = config.getGeneralConfig("autoFix.maxFixesPerFile", 50);
+    verboseAutoFix = config.getGeneralConfig("autoFix.verboseOutput", true);
+
+    logger.info(
+        "Auto-fix configuration: enabled="
+            + autoFixEnabled
+            + ", onFormat="
+            + autoFixOnFormat
+            + ", maxFixes="
+            + maxFixesPerFile);
   }
 
   /** Set up printer configuration based on formatter config. */
@@ -109,7 +138,9 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
       externalAnalyzers.add(checkstyle);
 
       if (checkstyle.isToolAvailable()) {
-        logger.info("Checkstyle analyzer initialized successfully");
+        logger.info(
+            "Checkstyle analyzer initialized successfully"
+                + (checkstyle.canAutoFix() ? " (auto-fix supported)" : ""));
       } else {
         logger.warning("Checkstyle not available: " + checkstyle.getUnavailabilityReason());
       }
@@ -123,7 +154,9 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
       externalAnalyzers.add(pmd);
 
       if (pmd.isToolAvailable()) {
-        logger.info("PMD analyzer initialized successfully");
+        logger.info(
+            "PMD analyzer initialized successfully"
+                + (pmd.canAutoFix() ? " (auto-fix supported)" : ""));
       } else {
         logger.warning("PMD not available: " + pmd.getUnavailabilityReason());
       }
@@ -164,33 +197,68 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
         return createParseErrorResult();
       }
 
-      // Perform analysis (with caching)
-      AnalysisResult analysisResult = performAnalysis(analysisCacheKey, cu.clone());
+      // Track all changes and refactorings
+      List<Refactoring> allRefactorings = new ArrayList<>();
+      List<FormatterError> allErrors = new ArrayList<>();
+      String currentCode = sourceCode;
+      CompilationUnit workingCu = cu.clone();
 
-      // Apply refactorings
-      RefactoringResult refactoringResult = applyRefactorings(cu.clone(), analysisResult.errors);
+      // Step 1: Apply external tool auto-fixes if enabled
+      if (autoFixEnabled && autoFixOnFormat) {
+        ExternalAutoFixResult externalFixResult =
+            applyExternalToolAutoFixes(workingCu, currentCode);
+        if (externalFixResult.hasChanges()) {
+          currentCode = externalFixResult.getFixedCode();
+          allRefactorings.addAll(externalFixResult.getRefactorings());
 
-      // Format the code
-      String formattedCode = printer.print(cu);
+          // Re-parse the fixed code
+          workingCu = getOrParseCompilationUnit(astCacheKey + ":fixed", currentCode);
+          if (workingCu == null) {
+            logger.warning("Failed to parse code after external tool fixes");
+            workingCu = cu.clone(); // Fallback to original
+            currentCode = sourceCode;
+          } else {
+            if (verboseAutoFix) {
+              logger.info(
+                  "Applied external tool fixes: "
+                      + externalFixResult.getRefactorings().size()
+                      + " changes");
+            }
+          }
+        }
+        allErrors.addAll(externalFixResult.getRemainingErrors());
+      }
 
-      // Check if code was actually changed
-      boolean codeChanged = !sourceCode.equals(formattedCode);
-      List<Refactoring> allRefactorings = new ArrayList<>(refactoringResult.refactorings);
+      // Step 2: Perform analysis on the current state
+      AnalysisResult analysisResult = performAnalysis(analysisCacheKey, workingCu.clone());
 
+      // Step 3: Apply custom analyzer refactorings
+      RefactoringResult customRefactoringResult =
+          applyCustomRefactorings(workingCu.clone(), analysisResult.errors);
+      allRefactorings.addAll(customRefactoringResult.refactorings);
+      allErrors.addAll(customRefactoringResult.errors);
+
+      // Step 4: Format the code with JavaParser
+      String formattedCode = printer.print(workingCu);
+
+      // Check if code was actually changed by formatting
+      boolean codeChanged = !currentCode.equals(formattedCode);
       if (codeChanged) {
         allRefactorings.add(
             new Refactoring(
                 "JAVA_FORMATTING",
                 1,
-                sourceCode.split("\n").length,
+                currentCode.split("\n").length,
                 "Applied standard Java formatting"));
       }
 
-      // Combine all errors
-      List<FormatterError> allErrors = new ArrayList<>(analysisResult.errors);
-      allErrors.addAll(refactoringResult.errors);
+      // Combine all errors from analysis
+      allErrors.addAll(analysisResult.errors);
 
-      // Determine success
+      // Filter out duplicate errors
+      allErrors = removeDuplicateErrors(allErrors);
+
+      // Determine success (no fatal or error level issues)
       boolean successful =
           allErrors.stream()
               .noneMatch(
@@ -198,6 +266,12 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
 
       // Clean up cache if needed
       cleanupCacheIfNeeded();
+
+      // Log summary if verbose auto-fix is enabled
+      if (verboseAutoFix && !allRefactorings.isEmpty()) {
+        logger.info("Applied " + allRefactorings.size() + " refactorings to " + filePath);
+        allRefactorings.forEach(r -> logger.fine("  - " + r.getDescription()));
+      }
 
       return FormatterResult.builder()
           .successful(successful)
@@ -222,6 +296,136 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     }
   }
 
+  /** Apply external tool auto-fixes (Checkstyle, PMD) with priority ordering. */
+  private ExternalAutoFixResult applyExternalToolAutoFixes(CompilationUnit cu, String sourceCode) {
+    List<Refactoring> allRefactorings = new ArrayList<>();
+    List<FormatterError> remainingErrors = new ArrayList<>();
+    String currentCode = sourceCode;
+    int totalFixesApplied = 0;
+
+    // Get priorities from configuration
+    Map<String, Integer> priorities = new HashMap<>();
+    priorities.put("checkstyle", config.getGeneralConfig("autoFix.priorities.checkstyle", 1));
+    priorities.put("pmd", config.getGeneralConfig("autoFix.priorities.pmd", 2));
+
+    // Sort external analyzers by priority
+    List<CodeAnalyzer> sortedAnalyzers =
+        externalAnalyzers.stream()
+            .sorted(
+                (a1, a2) -> {
+                  String name1 = a1.getClass().getSimpleName().toLowerCase();
+                  String name2 = a2.getClass().getSimpleName().toLowerCase();
+
+                  int priority1 = priorities.getOrDefault(name1.replace("analyzer", ""), 999);
+                  int priority2 = priorities.getOrDefault(name2.replace("analyzer", ""), 999);
+
+                  return Integer.compare(priority1, priority2);
+                })
+            .collect(Collectors.toList());
+
+    // Apply fixes from each external tool in priority order
+    for (CodeAnalyzer analyzer : sortedAnalyzers) {
+      if (!analyzer.canAutoFix()) {
+        continue;
+      }
+
+      if (totalFixesApplied >= maxFixesPerFile) {
+        logger.warning("Reached maximum fixes per file limit: " + maxFixesPerFile);
+        break;
+      }
+
+      try {
+        // Re-parse the current code state
+        CompilationUnit currentCu = parseCode(currentCode);
+        if (currentCu == null) {
+          logger.warning("Failed to parse code for " + analyzer.getClass().getSimpleName());
+          continue;
+        }
+
+        // Apply refactorings from this analyzer
+        com.codeformatter.plugins.spring.RefactoringResult result =
+            analyzer.applyRefactoring(currentCu.clone());
+
+        if (!result.getAppliedRefactorings().isEmpty()) {
+          // Get the updated code
+          String updatedCode = printer.print(currentCu);
+
+          if (!updatedCode.equals(currentCode)) {
+            currentCode = updatedCode;
+            allRefactorings.addAll(result.getAppliedRefactorings());
+            totalFixesApplied += result.getAppliedRefactorings().size();
+
+            if (verboseAutoFix) {
+              logger.info(
+                  analyzer.getClass().getSimpleName()
+                      + " applied "
+                      + result.getAppliedRefactorings().size()
+                      + " fixes");
+            }
+          }
+        }
+
+        remainingErrors.addAll(result.getErrors());
+
+      } catch (Exception e) {
+        logger.log(
+            Level.WARNING,
+            "Error applying auto-fixes from " + analyzer.getClass().getSimpleName(),
+            e);
+        remainingErrors.add(
+            new FormatterError(
+                Severity.WARNING,
+                "Auto-fix error from "
+                    + analyzer.getClass().getSimpleName()
+                    + ": "
+                    + e.getMessage(),
+                1,
+                1,
+                "Manual review may be required"));
+      }
+    }
+
+    return new ExternalAutoFixResult(sourceCode, currentCode, allRefactorings, remainingErrors);
+  }
+
+  /** Parse source code into CompilationUnit. */
+  private CompilationUnit parseCode(String sourceCode) {
+    try {
+      JavaParser parser = new JavaParser();
+      ParseResult<CompilationUnit> parseResult = parser.parse(sourceCode);
+
+      if (parseResult.isSuccessful() && parseResult.getResult().isPresent()) {
+        return parseResult.getResult().get();
+      } else {
+        logger.warning(
+            "Failed to parse source code: "
+                + parseResult.getProblems().stream()
+                    .map(p -> p.getMessage())
+                    .reduce("", (a, b) -> a + "; " + b));
+        return null;
+      }
+    } catch (Exception e) {
+      logger.log(Level.WARNING, "Exception during code parsing", e);
+      return null;
+    }
+  }
+
+  /** Remove duplicate errors based on line, column, and message. */
+  private List<FormatterError> removeDuplicateErrors(List<FormatterError> errors) {
+    Set<String> seen = new HashSet<>();
+    List<FormatterError> uniqueErrors = new ArrayList<>();
+
+    for (FormatterError error : errors) {
+      String key = error.getLine() + ":" + error.getMessage();
+      if (!seen.contains(key)) {
+        seen.add(key);
+        uniqueErrors.add(error);
+      }
+    }
+
+    return uniqueErrors;
+  }
+
   /** Get compilation unit from cache or parse it. */
   private CompilationUnit getOrParseCompilationUnit(String cacheKey, String sourceCode) {
     // Check cache first
@@ -237,19 +441,10 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     }
 
     // Parse source code
-    JavaParser parser = new JavaParser();
-    ParseResult<CompilationUnit> parseResult = parser.parse(sourceCode);
-
-    if (!parseResult.isSuccessful()) {
-      logger.warning(
-          "Failed to parse source code: "
-              + parseResult.getProblems().stream()
-                  .map(p -> p.getMessage())
-                  .reduce("", (a, b) -> a + "; " + b));
+    CompilationUnit cu = parseCode(sourceCode);
+    if (cu == null) {
       return null;
     }
-
-    CompilationUnit cu = parseResult.getResult().get();
 
     // Cache the result
     cacheLock.writeLock().lock();
@@ -275,7 +470,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     List<FormatterError> allErrors = new ArrayList<>();
     Map<String, Integer> analyzerErrorCounts = new HashMap<>();
 
-    // Run external analyzers first (Checkstyle, PMD)
+    // Run external analyzers for analysis (not auto-fix)
     for (CodeAnalyzer analyzer : externalAnalyzers) {
       try {
         String analyzerName = analyzer.getClass().getSimpleName();
@@ -300,7 +495,7 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
       }
     }
 
-    // Run custom analyzers
+    // Run custom analyzers for analysis
     for (CodeAnalyzer analyzer : customAnalyzers) {
       try {
         String analyzerName = analyzer.getClass().getSimpleName();
@@ -339,8 +534,8 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     return new AnalysisResult(allErrors);
   }
 
-  /** Apply refactorings from analyzers that support auto-fixing. */
-  private RefactoringResult applyRefactorings(
+  /** Apply refactorings from custom analyzers that support auto-fixing. */
+  private RefactoringResult applyCustomRefactorings(
       CompilationUnit cu, List<FormatterError> analysisErrors) {
     List<Refactoring> allRefactorings = new ArrayList<>();
     List<FormatterError> refactoringErrors = new ArrayList<>();
@@ -431,18 +626,21 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
   public AnalyzerStatus getAnalyzerStatus() {
     Map<String, Boolean> externalToolStatus = new HashMap<>();
     Map<String, String> unavailabilityReasons = new HashMap<>();
+    Map<String, Boolean> autoFixStatus = new HashMap<>();
 
     for (CodeAnalyzer analyzer : externalAnalyzers) {
       String name = analyzer.getClass().getSimpleName();
       if (analyzer instanceof CheckstyleAnalyzer) {
         CheckstyleAnalyzer checkstyle = (CheckstyleAnalyzer) analyzer;
         externalToolStatus.put(name, checkstyle.isToolAvailable());
+        autoFixStatus.put(name, checkstyle.canAutoFix());
         if (!checkstyle.isToolAvailable()) {
           unavailabilityReasons.put(name, checkstyle.getUnavailabilityReason());
         }
       } else if (analyzer instanceof PMDAnalyzer) {
         PMDAnalyzer pmd = (PMDAnalyzer) analyzer;
         externalToolStatus.put(name, pmd.isToolAvailable());
+        autoFixStatus.put(name, pmd.canAutoFix());
         if (!pmd.isToolAvailable()) {
           unavailabilityReasons.put(name, pmd.getUnavailabilityReason());
         }
@@ -452,7 +650,8 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     List<String> customAnalyzerNames =
         customAnalyzers.stream().map(a -> a.getClass().getSimpleName()).toList();
 
-    return new AnalyzerStatus(externalToolStatus, unavailabilityReasons, customAnalyzerNames);
+    return new AnalyzerStatus(
+        externalToolStatus, unavailabilityReasons, customAnalyzerNames, autoFixStatus);
   }
 
   @Override
@@ -504,18 +703,55 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
     }
   }
 
+  private static class ExternalAutoFixResult {
+    final String originalCode;
+    final String fixedCode;
+    final List<Refactoring> refactorings;
+    final List<FormatterError> remainingErrors;
+
+    ExternalAutoFixResult(
+        String originalCode,
+        String fixedCode,
+        List<Refactoring> refactorings,
+        List<FormatterError> remainingErrors) {
+      this.originalCode = originalCode;
+      this.fixedCode = fixedCode;
+      this.refactorings = refactorings;
+      this.remainingErrors = remainingErrors;
+    }
+
+    boolean hasChanges() {
+      return !originalCode.equals(fixedCode);
+    }
+
+    String getFixedCode() {
+      return fixedCode;
+    }
+
+    List<Refactoring> getRefactorings() {
+      return refactorings;
+    }
+
+    List<FormatterError> getRemainingErrors() {
+      return remainingErrors;
+    }
+  }
+
   public static class AnalyzerStatus {
     private final Map<String, Boolean> externalToolStatus;
     private final Map<String, String> unavailabilityReasons;
     private final List<String> customAnalyzers;
+    private final Map<String, Boolean> autoFixStatus;
 
     public AnalyzerStatus(
         Map<String, Boolean> externalToolStatus,
         Map<String, String> unavailabilityReasons,
-        List<String> customAnalyzers) {
+        List<String> customAnalyzers,
+        Map<String, Boolean> autoFixStatus) {
       this.externalToolStatus = externalToolStatus;
       this.unavailabilityReasons = unavailabilityReasons;
       this.customAnalyzers = customAnalyzers;
+      this.autoFixStatus = autoFixStatus;
     }
 
     public Map<String, Boolean> getExternalToolStatus() {
@@ -530,12 +766,20 @@ public class SpringBootFormatter implements FormatterPlugin, AutoCloseable {
       return customAnalyzers;
     }
 
+    public Map<String, Boolean> getAutoFixStatus() {
+      return autoFixStatus;
+    }
+
     public boolean areAllExternalToolsAvailable() {
       return externalToolStatus.values().stream().allMatch(Boolean::valueOf);
     }
 
     public int getAvailableExternalToolCount() {
       return (int) externalToolStatus.values().stream().filter(Boolean::valueOf).count();
+    }
+
+    public int getAutoFixCapableToolCount() {
+      return (int) autoFixStatus.values().stream().filter(Boolean::valueOf).count();
     }
   }
 }
